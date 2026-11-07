@@ -203,25 +203,17 @@ async function migrateSqliteToMySQLIfNeeded() {
   }
 }
 
-// Normalisasi hierarki folder, hapus duplikat folder, dan tautkan ulang berkas ke folder yang tepat
+// Normalisasi ID folder bawaan dan penyelamatan berkas yatim (orphan) tanpa mengubah hierarki folder kustom pengguna
 export async function cleanAndDeduplicateDatabase() {
   try {
-    // 1. Normalisasi generic parent_id & folder_id
+    // 1. Normalisasi generic parent_id & folder_id warisan lama, serta perbaiki parent_id yang sempat terisi kode warna (#...)
+    await db.run("UPDATE folders SET parent_id = NULL WHERE parent_id LIKE '#%' OR parent_id = ''");
+
     if (isMySQL) {
       await db.run("UPDATE folders SET parent_id = CONCAT('folder-conv-', user_id) WHERE parent_id = 'folder-converted' OR parent_id = 'folder-conv'");
       await db.run("UPDATE folders SET parent_id = CONCAT('folder-scan-', user_id) WHERE parent_id = 'folder-scan'");
       await db.run("UPDATE folders SET parent_id = CONCAT('folder-doc-', user_id) WHERE parent_id = 'folder-my-docs' OR parent_id = 'folder-doc'");
       await db.run("UPDATE folders SET parent_id = CONCAT('folder-arc-', user_id) WHERE parent_id = 'folder-archive' OR parent_id = 'folder-arc'");
-
-      await db.run(`
-        UPDATE folders 
-        SET parent_id = CASE WHEN color = '#10b981' THEN CONCAT('folder-conv-', user_id) ELSE CONCAT('folder-scan-', user_id) END
-        WHERE (parent_id IS NULL OR parent_id = '')
-          AND id NOT LIKE 'folder-scan-%'
-          AND id NOT LIKE 'folder-conv-%'
-          AND id NOT LIKE 'folder-doc-%'
-          AND id NOT LIKE 'folder-arc-%'
-      `);
 
       await db.run("UPDATE files SET folder_id = CONCAT('folder-conv-', user_id) WHERE folder_id = 'folder-converted' OR folder_id = 'folder-conv'");
       await db.run("UPDATE files SET folder_id = CONCAT('folder-scan-', user_id) WHERE folder_id = 'folder-scan'");
@@ -233,23 +225,13 @@ export async function cleanAndDeduplicateDatabase() {
       await db.run("UPDATE folders SET parent_id = 'folder-doc-' || user_id WHERE parent_id = 'folder-my-docs' OR parent_id = 'folder-doc'");
       await db.run("UPDATE folders SET parent_id = 'folder-arc-' || user_id WHERE parent_id = 'folder-archive' OR parent_id = 'folder-arc'");
 
-      await db.run(`
-        UPDATE folders 
-        SET parent_id = CASE WHEN color = '#10b981' THEN 'folder-conv-' || user_id ELSE 'folder-scan-' || user_id END
-        WHERE (parent_id IS NULL OR parent_id = '')
-          AND id NOT LIKE 'folder-scan-%'
-          AND id NOT LIKE 'folder-conv-%'
-          AND id NOT LIKE 'folder-doc-%'
-          AND id NOT LIKE 'folder-arc-%'
-      `);
-
       await db.run("UPDATE files SET folder_id = 'folder-conv-' || user_id WHERE folder_id = 'folder-converted' OR folder_id = 'folder-conv'");
       await db.run("UPDATE files SET folder_id = 'folder-scan-' || user_id WHERE folder_id = 'folder-scan'");
       await db.run("UPDATE files SET folder_id = 'folder-doc-' || user_id WHERE folder_id = 'folder-my-docs' OR folder_id = 'folder-doc'");
       await db.run("UPDATE files SET folder_id = 'folder-arc-' || user_id WHERE folder_id = 'folder-archive' OR folder_id = 'folder-arc'");
     }
 
-    // 2. Ambil seluruh folder dan gabungkan duplikat dengan nama yang sama per user
+    // 2. Gabungkan folder duplikat HANYA jika memiliki user_id, parent_id, dan nama yang sama persis
     const allFolders = await db.all('SELECT * FROM folders ORDER BY created_at ASC');
     const folderGroups = new Map();
 
@@ -261,7 +243,7 @@ export async function cleanAndDeduplicateDatabase() {
         f.id.startsWith('folder-arc-');
       const key = isSys
         ? `sys:::${f.id}`
-        : `${f.user_id}:::${f.name.trim().toLowerCase()}`;
+        : `${f.user_id}:::${f.parent_id || 'root'}:::${f.name.trim().toLowerCase()}`;
       if (!folderGroups.has(key)) {
         folderGroups.set(key, []);
       }
@@ -281,7 +263,8 @@ export async function cleanAndDeduplicateDatabase() {
       }
     }
 
-    // 3. Pastikan semua berkas hasil konversi (<NamaFolder>_Hal_<N>.jpg) terhubung ke foldernya
+    // 3. Pulihkan hanya berkas yatim (orphan) yang folder_id-nya tidak ada di tabel folders
+    //    Jangan pernah memindahkan berkas yang sudah memiliki folder_id valid!
     const remainingFolders = await db.all('SELECT * FROM folders');
     const validFolderIds = new Set(remainingFolders.map(f => f.id));
     const userFolderByName = new Map();
@@ -291,32 +274,35 @@ export async function cleanAndDeduplicateDatabase() {
 
     const allFiles = await db.all('SELECT id, user_id, name, folder_id FROM files WHERE is_trash = 0');
     for (const file of allFiles) {
-      const halMatch = file.name.match(/^(.+)_Hal_\d+\.(jpg|jpeg|png)$/i);
-      if (halMatch) {
-        const prefixName = halMatch[1].trim().toLowerCase();
-        const matchedFolderId = userFolderByName.get(`${file.user_id}:::${prefixName}`);
-        if (matchedFolderId && file.folder_id !== matchedFolderId) {
-          await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [matchedFolderId, file.id]);
-          continue;
-        }
+      if (file.folder_id && validFolderIds.has(file.folder_id)) {
+        continue;
       }
 
-      if (!file.folder_id || !validFolderIds.has(file.folder_id)) {
-        // Coba cari berdasarkan kecocokan nama folder
-        let matched = null;
-        for (const f of remainingFolders) {
-          if (
-            f.user_id === file.user_id &&
-            !f.id.startsWith('folder-') &&
-            file.name.toLowerCase().includes(f.name.trim().toLowerCase())
-          ) {
-            matched = f.id;
-            break;
-          }
+      const halMatch = file.name.match(/^(.+)_Hal_\d+\.(jpg|jpeg|png)$/i);
+      if (halMatch) {
+        const rawFolderName = halMatch[1].trim();
+        const prefixName = rawFolderName.toLowerCase();
+        let matchedFolderId = userFolderByName.get(`${file.user_id}:::${prefixName}`);
+        if (!matchedFolderId) {
+          // Buat kembali folder hasil konversi yang sempat hilang agar berkas tidak lenyap di UI
+          matchedFolderId = `folder_rec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const parentConvId = `folder-conv-${file.user_id}`;
+          const nowIso = new Date().toISOString();
+          await db.run(
+            'INSERT INTO folders (id, user_id, name, parent_id, color, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [matchedFolderId, file.user_id, rawFolderName, parentConvId, '#10b981', nowIso]
+          );
+          validFolderIds.add(matchedFolderId);
+          userFolderByName.set(`${file.user_id}:::${prefixName}`, matchedFolderId);
         }
-        if (matched) {
-          await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [matched, file.id]);
-        }
+        await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [matchedFolderId, file.id]);
+        continue;
+      }
+
+      // Jika berkas lain kehilangan foldernya, arahkan ke Dokumen Saya milik user tersebut
+      const fallbackDocFolder = `folder-doc-${file.user_id}`;
+      if (validFolderIds.has(fallbackDocFolder)) {
+        await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [fallbackDocFolder, file.id]);
       }
     }
   } catch (migErr) {

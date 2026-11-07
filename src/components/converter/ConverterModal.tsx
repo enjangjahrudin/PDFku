@@ -23,7 +23,10 @@ import { VirtualFile } from '../../types';
 interface ConverterModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSaveToExplorer: (file: Omit<VirtualFile, 'id' | 'createdAt' | 'updatedAt'>) => Promise<any>;
+  onSaveToExplorer: (
+    file: Omit<VirtualFile, 'id' | 'createdAt' | 'updatedAt'>,
+    options?: { skipRefresh?: boolean }
+  ) => Promise<any>;
   onCreateFolder?: (name: string, parentId?: string | null, colorTag?: string) => Promise<VirtualFile>;
   onNavigateToFolder?: (folderId: string | null) => void;
 }
@@ -166,17 +169,20 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
           folderName: baseName
         });
 
-        await onSaveToExplorer({
-          name: `${baseName}_Hal_${item.pageNumber}.jpg`,
-          parentId: targetFolderId,
-          type: 'jpg',
-          isFolder: false,
-          size: item.blob.size,
-          blob: item.blob,
-          thumbnail: item.dataUrl,
-          pageCount: 1,
-          colorTag: '#10b981'
-        });
+        await onSaveToExplorer(
+          {
+            name: `${baseName}_Hal_${item.pageNumber}.jpg`,
+            parentId: targetFolderId,
+            type: 'jpg',
+            isFolder: false,
+            size: item.blob.size,
+            blob: item.blob,
+            thumbnail: item.dataUrl,
+            pageCount: 1,
+            colorTag: '#10b981'
+          },
+          { skipRefresh: i < pdfResults.length - 1 }
+        );
       }
 
       // Arahkan tampilan explorer langsung masuk ke folder yang baru dibuat

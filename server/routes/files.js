@@ -37,14 +37,16 @@ const upload = multer({
 const router = express.Router();
 router.use(authenticateToken);
 
-// Normalisasi ID folder bawaan agar selalu presisi ke akun user
+// Normalisasi ID folder bawaan agar selalu presisi ke akun user & tolak nilai korup (seperti kode warna hex)
 function resolveUserFolderId(folderId, userId) {
-  if (!folderId) return null;
-  if (folderId === 'folder-scan' || folderId === `folder-scan-${userId}`) return `folder-scan-${userId}`;
-  if (folderId === 'folder-converted' || folderId === 'folder-conv' || folderId === `folder-conv-${userId}`) return `folder-conv-${userId}`;
-  if (folderId === 'folder-my-docs' || folderId === 'folder-doc' || folderId === `folder-doc-${userId}`) return `folder-doc-${userId}`;
-  if (folderId === 'folder-archive' || folderId === 'folder-arc' || folderId === `folder-arc-${userId}`) return `folder-arc-${userId}`;
-  return folderId;
+  if (!folderId || typeof folderId !== 'string') return null;
+  const trimmed = folderId.trim();
+  if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined' || trimmed.startsWith('#')) return null;
+  if (trimmed === 'folder-scan' || trimmed === `folder-scan-${userId}`) return `folder-scan-${userId}`;
+  if (trimmed === 'folder-converted' || trimmed === 'folder-conv' || trimmed === `folder-conv-${userId}`) return `folder-conv-${userId}`;
+  if (trimmed === 'folder-my-docs' || trimmed === 'folder-doc' || trimmed === `folder-doc-${userId}`) return `folder-doc-${userId}`;
+  if (trimmed === 'folder-archive' || trimmed === 'folder-arc' || trimmed === `folder-arc-${userId}`) return `folder-arc-${userId}`;
+  return trimmed;
 }
 
 // 1. Ambil daftar folder dan file milik user aktif
@@ -53,12 +55,9 @@ router.get('/', async (req, res) => {
     const { folderId, search, view } = req.query;
     const userId = req.user.id;
 
-    // Ambil semua folder user (buat default jika baru pertama kali)
+    // Pastikan 4 folder sistem bawaan selalu ada untuk user ini
+    await seedDefaultFolders(userId);
     let folders = await db.all('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC', [userId]);
-    if (folders.length === 0) {
-      await seedDefaultFolders(userId);
-      folders = await db.all('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC', [userId]);
-    }
 
     let filesQuery = 'SELECT * FROM files WHERE user_id = ?';
     const params = [userId];
@@ -87,6 +86,53 @@ router.get('/', async (req, res) => {
 
     filesQuery += ' ORDER BY created_at DESC';
     const files = await db.all(filesQuery, params);
+
+    // Pemulihan otomatis berkas yatim (orphan) yang folder_id-nya tidak ditemukan di tabel folders
+    if (!folderId && !search && !view) {
+      const validFolderIds = new Set(folders.map(f => f.id));
+      const folderByName = new Map();
+      for (const f of folders) {
+        folderByName.set(f.name.trim().toLowerCase(), f);
+      }
+
+      for (const file of files) {
+        if (file.folder_id && validFolderIds.has(file.folder_id)) {
+          continue;
+        }
+        const halMatch = file.name.match(/^(.+)_Hal_\d+\.(jpg|jpeg|png)$/i);
+        if (halMatch) {
+          const rawFolderName = halMatch[1].trim();
+          const lowerName = rawFolderName.toLowerCase();
+          let targetFolder = folderByName.get(lowerName);
+          if (!targetFolder) {
+            const newFolderId = `folder_rec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+            const parentConvId = `folder-conv-${userId}`;
+            const nowIso = new Date().toISOString();
+            await db.run(
+              'INSERT INTO folders (id, user_id, name, parent_id, color, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+              [newFolderId, userId, rawFolderName, parentConvId, '#10b981', nowIso]
+            );
+            targetFolder = {
+              id: newFolderId,
+              user_id: userId,
+              name: rawFolderName,
+              parent_id: parentConvId,
+              color: '#10b981',
+              created_at: nowIso
+            };
+            folders.push(targetFolder);
+            validFolderIds.add(newFolderId);
+            folderByName.set(lowerName, targetFolder);
+          }
+          file.folder_id = targetFolder.id;
+          await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [targetFolder.id, file.id]);
+        } else {
+          const fallbackDocId = `folder-doc-${userId}`;
+          file.folder_id = fallbackDocId;
+          await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [fallbackDocId, file.id]);
+        }
+      }
+    }
 
     // Hitung total storage terpakai
     const storageStats = await db.get('SELECT COALESCE(SUM(size), 0) as used_bytes, COUNT(*) as file_count FROM files WHERE user_id = ?', [userId]);
@@ -343,6 +389,18 @@ router.put('/folder/:id', async (req, res) => {
     }
 
     if (!folder) {
+      // Jika folder belum pernah tersinkron ke server tetapi diubah nama/posisinya dari client, buat recordnya
+      if (name && name.trim() !== '') {
+        const nowIso = new Date().toISOString();
+        const newServerId = folderId.startsWith('folder_') ? folderId : `folder_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const resolvedParent = parentId !== undefined ? resolveUserFolderId(parentId, userId) : null;
+        await db.run(
+          'INSERT INTO folders (id, user_id, name, parent_id, color, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [newServerId, userId, name.trim(), resolvedParent, color || '#3b82f6', nowIso]
+        );
+        const created = await db.get('SELECT * FROM folders WHERE id = ?', [newServerId]);
+        return res.json({ success: true, folder: created });
+      }
       return res.status(404).json({ success: false, message: 'Folder tidak ditemukan.' });
     }
 
@@ -376,7 +434,7 @@ router.put('/folder/:id', async (req, res) => {
   }
 });
 
-// 3c. Hapus Folder Beserta Isinya (Mendukung ID dan Pembersihan Duplikat)
+// 3c. Hapus Folder Beserta Isinya (Mendukung ID dan Pembersihan Duplikat pada Induk yang Sama)
 router.delete('/folder/:id', async (req, res) => {
   try {
     const folderId = req.params.id;
@@ -398,7 +456,7 @@ router.delete('/folder/:id', async (req, res) => {
       folder = await db.get('SELECT * FROM folders WHERE id = ? AND user_id = ?', [altId, userId]);
     }
     if (!folder && folderName) {
-      folder = await db.get('SELECT * FROM folders WHERE LOWER(name) = LOWER(?) AND user_id = ? LIMIT 1', [folderName.trim(), userId]);
+      folder = await db.get('SELECT * FROM folders WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND user_id = ? LIMIT 1', [folderName.trim(), userId]);
     }
 
     if (!folder) {
@@ -406,11 +464,12 @@ router.delete('/folder/:id', async (req, res) => {
       return res.json({ success: true, message: 'Folder sudah tidak ada di server.' });
     }
 
-    // Kumpulkan semua ID folder yang sama atau subfolder secara rekursif
-    // Termasuk seluruh duplikat folder dengan nama yang sama milik user ini
+    // Kumpulkan semua ID folder yang sama atau duplikat di induk (parent_id) yang sama
     const matchingFolders = await db.all(
-      'SELECT id FROM folders WHERE user_id = ? AND (id = ? OR LOWER(TRIM(name)) = LOWER(TRIM(?)))',
-      [userId, folder.id, folder.name]
+      `SELECT id FROM folders 
+       WHERE user_id = ? 
+         AND (id = ? OR (LOWER(TRIM(name)) = LOWER(TRIM(?)) AND COALESCE(parent_id, '') = COALESCE(?, '')))`,
+      [userId, folder.id, folder.name, folder.parent_id || '']
     );
 
     const folderIdsToDelete = Array.from(

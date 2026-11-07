@@ -82,11 +82,13 @@ export async function initializeUserDefaultFolders(db: PDFkuDatabase, userId?: n
 }
 
 export function normalizeFolderId(folderId: string | null | undefined, userId?: number | string | null): string | null {
-  if (!folderId) return null;
+  if (!folderId || typeof folderId !== 'string') return null;
+  const trimmed = folderId.trim();
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined' || trimmed.startsWith('#')) return null;
   const uid = userId ? String(userId) : '';
-  if (folderId === 'folder-scan' || folderId === `folder-scan-${uid}`) return uid ? `folder-scan-${uid}` : 'folder-scan';
-  if (folderId === 'folder-converted' || folderId === 'folder-conv' || folderId === `folder-conv-${uid}`) return uid ? `folder-conv-${uid}` : 'folder-conv';
-  if (folderId === 'folder-my-docs' || folderId === 'folder-doc' || folderId === `folder-doc-${uid}`) return uid ? `folder-doc-${uid}` : 'folder-doc';
-  if (folderId === 'folder-archive' || folderId === 'folder-arc' || folderId === `folder-arc-${uid}`) return uid ? `folder-arc-${uid}` : 'folder-arc';
-  return folderId;
+  if (trimmed === 'folder-scan' || trimmed === `folder-scan-${uid}`) return uid ? `folder-scan-${uid}` : 'folder-scan';
+  if (trimmed === 'folder-converted' || trimmed === 'folder-conv' || trimmed === `folder-conv-${uid}`) return uid ? `folder-conv-${uid}` : 'folder-conv';
+  if (trimmed === 'folder-my-docs' || trimmed === 'folder-doc' || trimmed === `folder-doc-${uid}`) return uid ? `folder-doc-${uid}` : 'folder-doc';
+  if (trimmed === 'folder-archive' || trimmed === 'folder-arc' || trimmed === `folder-arc-${uid}`) return uid ? `folder-arc-${uid}` : 'folder-arc';
+  return trimmed;
 }

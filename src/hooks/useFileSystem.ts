@@ -60,11 +60,6 @@ export function useFileSystem() {
     const defaultDocId = normalizeFolderId('folder-my-docs', userId);
     const defaultArcId = normalizeFolderId('folder-archive', userId);
 
-    const isSystemRoot = (id: string) =>
-      id === defaultScanId || id === defaultConvId || id === defaultDocId || id === defaultArcId ||
-      id === 'folder-scan' || id === 'folder-converted' || id === 'folder-my-docs' || id === 'folder-archive' ||
-      id.startsWith('folder-scan-') || id.startsWith('folder-conv-') || id.startsWith('folder-doc-') || id.startsWith('folder-arc-');
-
     const map = new Map<string, FolderNode>();
 
     // Deduplikasi folder dengan nama dan parent yang sama agar sidebar selalu bersih tanpa duplikat
@@ -73,20 +68,8 @@ export function useFileSystem() {
 
     activeFolders.forEach((f) => {
       let resolvedParentId = normalizeFolderId(f.parentId, userId);
-
-      // Jika bukan folder root bawaan, pastikan memiliki induk (tidak sejajar di root)
-      if (!isSystemRoot(f.id) && (!resolvedParentId || resolvedParentId === f.id)) {
-        if (f.colorTag === '#10b981') {
-          resolvedParentId = defaultConvId; // Masuk ke subfolder Hasil Konversi
-        } else {
-          resolvedParentId = defaultScanId; // Masuk ke subfolder Hasil Scan
-        }
-
-        // Perbarui di database
-        db.files.update(f.id, { parentId: resolvedParentId }).catch(() => {});
-        if (authService.getToken()) {
-          cloudFileService.updateFile(f.id, { folderId: resolvedParentId || undefined }).catch(() => {});
-        }
+      if (resolvedParentId === f.id) {
+        resolvedParentId = null;
       }
 
       const key = `${resolvedParentId || 'root'}:::${f.name.trim().toLowerCase()}`;
@@ -97,7 +80,10 @@ export function useFileSystem() {
     });
 
     uniqueFolders.forEach((f) => {
-      const resolvedParentId = normalizeFolderId(f.parentId, userId);
+      let resolvedParentId = normalizeFolderId(f.parentId, userId);
+      if (resolvedParentId === f.id) {
+        resolvedParentId = null;
+      }
       map.set(f.id, {
         id: f.id,
         name: f.name,
@@ -116,7 +102,7 @@ export function useFileSystem() {
       }
     });
 
-    // Urutkan root folders: Hasil Scan di atas, lalu Hasil Konversi, Dokumen Saya, Arsip
+    // Urutkan root folders: Hasil Scan di atas, lalu Hasil Konversi, Dokumen Saya, Arsip, lalu folder kustom root
     rootNodes.sort((a, b) => {
       const order = [defaultScanId, defaultConvId, defaultDocId, defaultArcId];
       const idxA = order.indexOf(a.id);
@@ -149,14 +135,20 @@ export function useFileSystem() {
         .filter((f) => !!f.isDeleted)
         .toArray();
     } else {
-      // Navigasi folder biasa dengan toleransi pencocokan ID server & lokal
+      // Navigasi folder biasa dengan toleransi pencocokan ID server & lokal pada induk yang sama
       const targetFolder = normalizeFolderId(currentFolderId, userId);
       const currentFolderItem = currentFolderId ? await db.files.get(currentFolderId) : null;
 
       let matchingFolderIds: (string | null | undefined)[] = [targetFolder, currentFolderId];
       if (currentFolderItem && currentFolderItem.isFolder) {
+        const currentParentNorm = normalizeFolderId(currentFolderItem.parentId, userId);
         const sameNameFolders = await db.files
-          .filter(f => !!f.isFolder && f.name.trim().toLowerCase() === currentFolderItem.name.trim().toLowerCase())
+          .filter(
+            f =>
+              !!f.isFolder &&
+              f.name.trim().toLowerCase() === currentFolderItem.name.trim().toLowerCase() &&
+              normalizeFolderId(f.parentId, userId) === currentParentNorm
+          )
           .toArray();
         matchingFolderIds = [...new Set([targetFolder, currentFolderId, ...sameNameFolders.map(f => f.id)])];
       }
@@ -212,13 +204,44 @@ export function useFileSystem() {
     try {
       const { folders: serverFolders, files: serverFiles } = await cloudFileService.fetchFiles({ view: 'all' });
 
-      // Sinkronisasi folder server ke database lokal akun ini
       const serverFolderIds = new Set(serverFolders.map(sf => sf.id));
+
+      // 1. Jika ada berkas lokal belum tersinkron (file-...) yang berada di dalam folder lokal sementara (folder-...),
+      //    daftarkan dulu folder lokal tersebut ke MySQL agar berkas di dalamnya tidak menjadi yatim (orphan).
+      const allLocalBeforeSync = await db.files.toArray();
+      const unsyncedFiles = allLocalBeforeSync.filter(f => !f.isFolder && !f.isDeleted && f.id.startsWith('file-') && !!f.blob);
+      const neededLocalFolderIds = new Set(unsyncedFiles.map(f => f.parentId).filter(Boolean) as string[]);
+
+      for (const localFolderId of neededLocalFolderIds) {
+        if (!serverFolderIds.has(localFolderId) && !isSystemRootFolder(localFolderId)) {
+          const localFolder = allLocalBeforeSync.find(f => f.id === localFolderId && f.isFolder);
+          if (localFolder) {
+            try {
+              const normParent = normalizeFolderId(localFolder.parentId, userId);
+              const createdCloudFolder = await cloudFileService.createFolder(
+                localFolder.name,
+                normParent || undefined,
+                localFolder.colorTag
+              );
+              if (createdCloudFolder && createdCloudFolder.id) {
+                serverFolders.push(createdCloudFolder);
+                serverFolderIds.add(createdCloudFolder.id);
+                await db.files.where('parentId').equals(localFolder.id).modify({ parentId: createdCloudFolder.id });
+                await db.files.delete(localFolder.id);
+              }
+            } catch (e) {
+              console.warn('Gagal mendaftarkan folder lokal ke server:', e);
+            }
+          }
+        }
+      }
+
+      // 2. Sinkronisasi folder dari server MySQL ke IndexedDB
       for (const sf of serverFolders) {
         const existing = await db.files.get(sf.id);
         const resolvedParentId = normalizeFolderId(sf.parent_id, userId);
         if (!existing) {
-          await db.files.add({
+          await db.files.put({
             id: sf.id,
             name: sf.name,
             parentId: resolvedParentId,
@@ -229,12 +252,20 @@ export function useFileSystem() {
             updatedAt: new Date(sf.created_at).getTime(),
             colorTag: sf.color || '#3b82f6'
           });
-        } else if (existing.parentId !== resolvedParentId || existing.name !== sf.name) {
-          await db.files.update(sf.id, { parentId: resolvedParentId, name: sf.name });
+        } else if (
+          existing.parentId !== resolvedParentId ||
+          existing.name !== sf.name ||
+          existing.colorTag !== (sf.color || existing.colorTag)
+        ) {
+          await db.files.update(sf.id, {
+            parentId: resolvedParentId,
+            name: sf.name,
+            colorTag: sf.color || existing.colorTag
+          });
         }
       }
 
-      // Hapus seluruh folder kustom lokal yang sudah tidak ada di server agar tidak muncul lagi
+      // Hapus seluruh folder kustom lokal yang sudah dihapus di server agar tidak pernah muncul lagi
       const obsoleteLocalFolders = await db.files
         .filter(f => !!f.isFolder && !isSystemRootFolder(f.id) && !serverFolderIds.has(f.id))
         .toArray();
@@ -247,14 +278,13 @@ export function useFileSystem() {
       for (const gid of genericFolders) {
         const target = normalizeFolderId(gid, userId);
         if (target && target !== gid) {
-          // Pindahkan sub-folder dan berkas yang mengarah ke generic ID
           await db.files.where('parentId').equals(gid).modify({ parentId: target });
-          // Hapus generic folder agar tidak duplikat di sidebar
           await db.files.delete(gid);
         }
       }
 
-      // 3. Sinkronisasi file server ke database lokal akun ini
+      // 3. Sinkronisasi berkas dari server MySQL ke IndexedDB
+      const serverFileIds = new Set(serverFiles.map(sf => sf.id));
       for (const sf of serverFiles) {
         const existing = await db.files.get(sf.id);
         const resolvedFolderId = normalizeFolderId(sf.folder_id, userId);
@@ -277,6 +307,7 @@ export function useFileSystem() {
           const updates: Partial<VirtualFile> = {};
           if (existing.parentId !== resolvedFolderId) updates.parentId = resolvedFolderId;
           if (existing.name !== sf.name) updates.name = sf.name;
+          if (!existing.thumbnail && sf.thumbnail) updates.thumbnail = sf.thumbnail;
           const isFav = sf.is_starred === 1;
           const isDel = sf.is_trash === 1;
           if (existing.isFavorite !== isFav) updates.isFavorite = isFav;
@@ -287,8 +318,7 @@ export function useFileSystem() {
         }
       }
 
-      // Hapus berkas lokal yang sudah dihapus permanen di server
-      const serverFileIds = new Set(serverFiles.map(sf => sf.id));
+      // Hapus berkas lokal (file_...) yang sudah dihapus permanen di server
       const obsoleteLocalFiles = await db.files
         .filter(f => !f.isFolder && !f.id.startsWith('file-') && !serverFileIds.has(f.id))
         .toArray();
@@ -296,80 +326,46 @@ export function useFileSystem() {
         await db.files.bulkDelete(obsoleteLocalFiles.map(f => f.id));
       }
 
-      // 4. OTOMATIS MERGE & BERSIHKAN FOLDER DUPLIKAT DI INDEXEDDB
-      const allLocal = await db.files.toArray();
-      const localFolders = allLocal.filter(f => f.isFolder && !f.isDeleted);
-      const folderGroups: Record<string, typeof localFolders> = {};
-
-      for (const lf of localFolders) {
-        const pId = normalizeFolderId(lf.parentId, userId) || 'root';
-        const key = `${pId}:::${lf.name.trim().toLowerCase()}`;
-        if (!folderGroups[key]) folderGroups[key] = [];
-        folderGroups[key].push(lf);
-      }
-
-      for (const key of Object.keys(folderGroups)) {
-        const group = folderGroups[key];
-        if (group.length > 1) {
-          // Utamakan folder dengan ID resmi server (dimulai dengan folder_) atau yang paling awal
-          const survivor = group.find(f => f.id.startsWith('folder_')) || group[0];
-          const duplicates = group.filter(f => f.id !== survivor.id);
-
-          for (const dup of duplicates) {
-            // Pindahkan seluruh file & subfolder ke survivor
-            await db.files.where('parentId').equals(dup.id).modify({ parentId: survivor.id });
-            await db.files.delete(dup.id);
-          }
-        }
-      }
-
-      // 5. Hubungkan kembali file-file yang parentId-nya belum cocok dengan folder survivor
-      const updatedLocalFolders = await db.files.filter(f => !!f.isFolder).toArray();
-      const folderIdMap = new Map(updatedLocalFolders.map(f => [f.name.toLowerCase().trim(), f.id]));
-
-      const orphanFiles = await db.files.filter(f => !f.isFolder && !f.isDeleted).toArray();
-      for (const file of orphanFiles) {
-        if (!file.parentId || !updatedLocalFolders.some(f => f.id === file.parentId)) {
-          for (const [folderName, matchedFolderId] of folderIdMap.entries()) {
-            if (file.name.toLowerCase().includes(folderName)) {
-              await db.files.update(file.id, { parentId: matchedFolderId });
-              break;
-            }
-          }
-        }
-      }
-
-      // 6. Unggah otomatis berkas lokal (file-...) yang sebelumnya tertahan batas ukuran ke database MySQL
-      const serverFileNames = new Set(serverFiles.map(sf => sf.name.trim().toLowerCase()));
+      // 4. Unggah otomatis berkas lokal sementara (file-...) ke database MySQL
+      const serverFileKeys = new Set(
+        serverFiles.map(sf => `${normalizeFolderId(sf.folder_id, userId) || 'root'}:::${sf.name.trim().toLowerCase()}`)
+      );
       const unsyncedLocalFiles = await db.files
         .filter(f => !f.isFolder && !f.isDeleted && f.id.startsWith('file-') && !!f.blob)
         .toArray();
 
       for (const localFile of unsyncedLocalFiles) {
-        if (!serverFileNames.has(localFile.name.trim().toLowerCase())) {
-          try {
-            const uploaded = await cloudFileService.uploadFile(localFile.blob!, {
-              name: localFile.name,
-              folderId: localFile.parentId || undefined,
-              ocrText: localFile.ocrText,
-              thumbnail: localFile.thumbnail
+        const normParent = normalizeFolderId(localFile.parentId, userId);
+        const fileKey = `${normParent || 'root'}:::${localFile.name.trim().toLowerCase()}`;
+        if (serverFileKeys.has(fileKey)) {
+          // Berkas sudah ada di server pada folder yang sama, hapus duplikat sementara lokal
+          await db.files.delete(localFile.id);
+          continue;
+        }
+        try {
+          const uploaded = await cloudFileService.uploadFile(localFile.blob!, {
+            name: localFile.name,
+            folderId: normParent || undefined,
+            ocrText: localFile.ocrText,
+            thumbnail: localFile.thumbnail
+          });
+          if (uploaded && uploaded.id) {
+            await db.files.delete(localFile.id);
+            await db.files.put({
+              ...localFile,
+              id: uploaded.id,
+              parentId: normalizeFolderId(uploaded.folder_id, userId) || normParent
             });
-            if (uploaded && uploaded.id) {
-              await db.files.delete(localFile.id);
-              await db.files.put({
-                ...localFile,
-                id: uploaded.id
-              });
-            }
-          } catch (upErr) {
-            console.warn('Gagal mengunggah berkas lokal tertunda ke MySQL:', upErr);
+            serverFileKeys.add(fileKey);
           }
+        } catch (upErr) {
+          console.warn('Gagal mengunggah berkas lokal tertunda ke MySQL:', upErr);
         }
       }
     } catch (e) {
       console.warn('Gagal sinkronisasi dari cloud VPS:', e);
     }
-  }, [userId, db]);
+  }, [userId, db, isSystemRootFolder]);
 
   // Ketika akun user berubah (login / ganti akun), inisialisasi ulang storage
   useEffect(() => {
@@ -493,7 +489,10 @@ export function useFileSystem() {
   };
 
   // Tambah file baru (dari scan atau converter)
-  const addFile = async (file: Omit<VirtualFile, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const addFile = async (
+    file: Omit<VirtualFile, 'id' | 'createdAt' | 'updatedAt'>,
+    options?: { skipRefresh?: boolean }
+  ) => {
     const now = Date.now();
     const rawParentId = file.parentId !== undefined ? file.parentId : currentFolderId;
     const finalParentId = normalizeFolderId(rawParentId, userId);
@@ -526,7 +525,9 @@ export function useFileSystem() {
     };
 
     await db.files.put(newFile);
-    await refreshAll();
+    if (!options?.skipRefresh) {
+      await refreshAll();
+    }
     return newFile;
   };
 
@@ -557,16 +558,18 @@ export function useFileSystem() {
       return;
     }
 
-    // Cari seluruh subfolder, duplikat bernama sama, dan file di dalamnya secara rekursif di IndexedDB
+    // Cari seluruh subfolder, duplikat bernama sama pada induk yang sama, dan file di dalamnya secara rekursif di IndexedDB
     const allItems = await db.files.toArray();
     const deletedItem = allItems.find(f => f.id === id);
+    const deletedParentNorm = deletedItem ? normalizeFolderId(deletedItem.parentId, userId) : null;
     const sameNameIds = deletedItem
       ? allItems
           .filter(
             f =>
               f.isFolder &&
               !isSystemRootFolder(f.id) &&
-              f.name.trim().toLowerCase() === deletedItem.name.trim().toLowerCase()
+              f.name.trim().toLowerCase() === deletedItem.name.trim().toLowerCase() &&
+              normalizeFolderId(f.parentId, userId) === deletedParentNorm
           )
           .map(f => f.id)
       : [];
@@ -602,7 +605,6 @@ export function useFileSystem() {
 
     // Jika user sedang berada di folder yang dihapus, arahkan ke folder induk atau default
     if (currentFolderId && folderIdsToDelete.includes(currentFolderId)) {
-      const deletedItem = allItems.find(f => f.id === id);
       const parentTarget = deletedItem?.parentId ? normalizeFolderId(deletedItem.parentId, userId) : normalizeFolderId('folder-scan', userId);
       setCurrentFolderId(parentTarget || null);
     }
@@ -759,10 +761,14 @@ export function useFileSystem() {
         const newName = destId === origFile.parentId ? `${base} - Salinan${ext}` : origFile.name;
 
         let newFileId = 'file-' + now + '-' + Math.random().toString(36).substring(2, 6);
+        let fileBlob = origFile.blob;
+        if (!fileBlob && authService.getToken()) {
+          fileBlob = (await cloudFileService.fetchFileBlob(origFile.id)) || undefined;
+        }
 
-        if (authService.getToken() && origFile.blob) {
+        if (authService.getToken() && fileBlob) {
           try {
-            const uploaded = await cloudFileService.uploadFile(origFile.blob, {
+            const uploaded = await cloudFileService.uploadFile(fileBlob, {
               name: newName,
               folderId: destId || undefined,
               ocrText: origFile.ocrText,
@@ -779,6 +785,7 @@ export function useFileSystem() {
           id: newFileId,
           name: newName,
           parentId: destId,
+          blob: fileBlob,
           createdAt: now,
           updatedAt: now
         };

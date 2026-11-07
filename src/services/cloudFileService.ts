@@ -289,5 +289,17 @@ export const cloudFileService = {
 
   getPreviewUrl(id: string): string {
     return `/api/files/preview/${id}`;
+  },
+
+  async fetchFileBlob(id: string): Promise<Blob | null> {
+    try {
+      const res = await fetch(`/api/files/preview/${encodeURIComponent(id)}`, {
+        headers: authService.getAuthHeader()
+      });
+      if (!res.ok) return null;
+      return await res.blob();
+    } catch {
+      return null;
+    }
   }
 };

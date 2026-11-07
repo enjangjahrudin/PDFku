@@ -25,6 +25,7 @@ import { Camera, Folder, FileText, Sparkles, Layers, Scan, Loader2 } from 'lucid
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { convertJpgToPdf } from './services/pdfService';
+import { cloudFileService } from './services/cloudFileService';
 
 export function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -227,26 +228,45 @@ export function App() {
 
   // Download Masal (Bulk ZIP)
   const handleBulkDownloadZip = async () => {
-    const selectedFiles = files.filter(f => selectedIds.includes(f.id) && !f.isFolder && f.blob);
+    const selectedFiles = files.filter(f => selectedIds.includes(f.id) && !f.isFolder);
     if (selectedFiles.length === 0) return;
 
     const zip = new JSZip();
+    let addedCount = 0;
     for (const f of selectedFiles) {
-      zip.file(f.name, f.blob!);
+      const blob = f.blob || (await cloudFileService.fetchFileBlob(f.id));
+      if (blob) {
+        zip.file(f.name, blob);
+        addedCount++;
+      }
+    }
+    if (addedCount === 0) {
+      alert('Gagal mengunduh berkas dari server.');
+      return;
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, `PDFku_Unduhan_${selectedFiles.length}_Berkas.zip`);
+    saveAs(zipBlob, `PDFku_Unduhan_${addedCount}_Berkas.zip`);
   };
 
   // Gabung Masal ke PDF (Bulk Merge)
   const handleBulkMergePdf = async () => {
-    const selectedImages = files.filter(f => selectedIds.includes(f.id) && !f.isFolder && f.blob && (f.type === 'jpg' || f.type === 'png'));
+    const selectedImages = files.filter(
+      f => selectedIds.includes(f.id) && !f.isFolder && (f.type === 'jpg' || f.type === 'png')
+    );
     if (selectedImages.length === 0) return;
 
     try {
-      const blobs = selectedImages.map(f => f.blob!);
+      const blobs: Blob[] = [];
+      for (const f of selectedImages) {
+        const blob = f.blob || (await cloudFileService.fetchFileBlob(f.id));
+        if (blob) blobs.push(blob);
+      }
+      if (blobs.length === 0) {
+        alert('Gagal memuat gambar dari server untuk digabungkan.');
+        return;
+      }
       const mergedPdfBlob = await convertJpgToPdf(blobs, { pageSize: 'A4', orientation: 'auto', margin: 'none' });
-      const newName = `Gabungan_${selectedImages.length}_Gambar.pdf`;
+      const newName = `Gabungan_${blobs.length}_Gambar.pdf`;
 
       await addFile({
         name: newName,
@@ -256,10 +276,10 @@ export function App() {
         size: mergedPdfBlob.size,
         blob: mergedPdfBlob,
         thumbnail: selectedImages[0].thumbnail,
-        pageCount: selectedImages.length,
+        pageCount: blobs.length,
         colorTag: '#3b82f6'
       });
-      alert(`Berhasil menggabungkan ${selectedImages.length} gambar menjadi "${newName}"!`);
+      alert(`Berhasil menggabungkan ${blobs.length} gambar menjadi "${newName}"!`);
     } catch (err) {
       alert('Gagal menggabungkan ke PDF: ' + (err as Error).message);
     }

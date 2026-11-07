@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { downloadBlob } from '../../utils/formatters';
+import { cloudFileService } from '../../services/cloudFileService';
 
 interface ContextMenuProps {
   x: number;
@@ -115,11 +116,20 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             </button>
           )}
 
-          {!file.isFolder && file.blob && (
+          {!file.isFolder && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 onClose();
-                downloadBlob(file.blob!, file.name);
+                if (file.blob) {
+                  downloadBlob(file.blob, file.name);
+                } else {
+                  const fetched = await cloudFileService.fetchFileBlob(file.id);
+                  if (fetched) {
+                    downloadBlob(fetched, file.name);
+                  } else {
+                    alert('Gagal mengunduh berkas dari server.');
+                  }
+                }
               }}
               className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-gray-100 transition text-left"
             >
@@ -251,7 +261,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-red-50 text-red-600 transition text-left"
           >
             <Trash2 className="w-4 h-4" />
-            <span>Pindahkan ke Tempat Sampah</span>
+            <span>{file.isFolder ? 'Hapus Folder' : 'Pindahkan ke Tempat Sampah'}</span>
           </button>
         </>
       ) : (
