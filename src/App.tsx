@@ -146,7 +146,7 @@ export function App() {
       zip.file(f.name, f.blob!);
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, `SmartDoc_Unduhan_${selectedFiles.length}_Berkas.zip`);
+    saveAs(zipBlob, `PDFku_Unduhan_${selectedFiles.length}_Berkas.zip`);
   };
 
   // Gabung Masal ke PDF (Bulk Merge)

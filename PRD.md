@@ -1,5 +1,5 @@
 # PRODUCT REQUIREMENT DOCUMENT (PRD)
-## SmartDoc – Intelligent Document Scanner, Converter & Explorer
+## PDFku – Intelligent Document Scanner, Converter & Explorer
 
 * **Status:** Draft / Updated with Feature Recommendations
 * **Versi:** 1.1.0
