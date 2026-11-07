@@ -234,12 +234,12 @@ export function useFileSystem() {
         }
       }
 
-      // Hapus folder lokal ber-ID server (folder_...) yang sudah dihapus di server agar tidak muncul lagi
-      const localServerFolders = await db.files
-        .filter(f => !!f.isFolder && f.id.startsWith('folder_') && !serverFolderIds.has(f.id))
+      // Hapus seluruh folder kustom lokal yang sudah tidak ada di server agar tidak muncul lagi
+      const obsoleteLocalFolders = await db.files
+        .filter(f => !!f.isFolder && !isSystemRootFolder(f.id) && !serverFolderIds.has(f.id))
         .toArray();
-      if (localServerFolders.length > 0) {
-        await db.files.bulkDelete(localServerFolders.map(f => f.id));
+      if (obsoleteLocalFolders.length > 0) {
+        await db.files.bulkDelete(obsoleteLocalFolders.map(f => f.id));
       }
 
       // Bersihkan & pindahkan folder bawaan generic lama yang tidak ber-suffix
@@ -285,6 +285,15 @@ export function useFileSystem() {
             await db.files.update(sf.id, updates);
           }
         }
+      }
+
+      // Hapus berkas lokal yang sudah dihapus permanen di server
+      const serverFileIds = new Set(serverFiles.map(sf => sf.id));
+      const obsoleteLocalFiles = await db.files
+        .filter(f => !f.isFolder && !f.id.startsWith('file-') && !serverFileIds.has(f.id))
+        .toArray();
+      if (obsoleteLocalFiles.length > 0) {
+        await db.files.bulkDelete(obsoleteLocalFiles.map(f => f.id));
       }
 
       // 4. OTOMATIS MERGE & BERSIHKAN FOLDER DUPLIKAT DI INDEXEDDB

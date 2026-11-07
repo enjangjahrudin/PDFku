@@ -179,6 +179,21 @@ async function migrateSqliteToMySQLIfNeeded() {
     }
 
     legacyDb.close();
+
+    // Arsipkan file SQLite lama agar migrasi hanya berjalan 1 KALI saja.
+    // Jika tidak diarsipkan, setiap server restart (pm2 restart) akan mengembalikan (re-import) folder/berkas yang sudah dihapus pengguna!
+    const migratedPath = path.join(dataDir, 'pdfku.db.migrated');
+    try {
+      if (fs.existsSync(dbPath)) {
+        if (fs.existsSync(dbPath + '-wal')) try { fs.unlinkSync(dbPath + '-wal'); } catch (e) {}
+        if (fs.existsSync(dbPath + '-shm')) try { fs.unlinkSync(dbPath + '-shm'); } catch (e) {}
+        fs.renameSync(dbPath, migratedPath);
+        console.log(`✅ File SQLite lama berhasil diarsipkan ke: ${migratedPath}`);
+      }
+    } catch (renErr) {
+      console.warn('Notice arsip SQLite:', renErr.message);
+    }
+
     console.log('✅ Sinkronisasi & migrasi data dari SQLite lama ke MySQL Server selesai.');
   } catch (err) {
     if (legacyDb) {

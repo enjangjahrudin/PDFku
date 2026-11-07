@@ -418,6 +418,10 @@ router.delete('/folder/:id', async (req, res) => {
         [folder.id, ...matchingFolders.map(f => f.id)].filter(fid => !systemRoots.includes(fid))
       )
     );
+
+    if (folderIdsToDelete.length === 0) {
+      return res.json({ success: true, message: 'Folder tidak ditemukan atau merupakan folder sistem.' });
+    }
     let queue = [...folderIdsToDelete];
 
     while (queue.length > 0) {
