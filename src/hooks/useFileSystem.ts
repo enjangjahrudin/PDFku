@@ -188,6 +188,7 @@ export function useFileSystem() {
 
   // Ketika akun user berubah (login / ganti akun), inisialisasi ulang storage
   useEffect(() => {
+    let isMounted = true;
     const initialFolder = normalizeFolderId('folder-scan', userId) || 'folder-scan';
     setCurrentFolderId(initialFolder);
     setHistory([initialFolder]);
@@ -196,10 +197,19 @@ export function useFileSystem() {
 
     (async () => {
       await initializeUserDefaultFolders(db, userId);
-      await syncWithCloud();
-      await refreshAll();
+      if (authService.getToken() && userId) {
+        await syncWithCloud();
+      }
+      if (isMounted) {
+        await loadFolderTree();
+        await loadCurrentFiles();
+      }
     })();
-  }, [userId, db, syncWithCloud, refreshAll]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     loadCurrentFiles();
@@ -212,10 +222,12 @@ export function useFileSystem() {
     setActiveNav('folder');
     setSelectedIds([]);
 
-    const nextHistory = history.slice(0, historyIndex + 1);
-    nextHistory.push(resolvedId);
-    setHistory(nextHistory);
-    setHistoryIndex(nextHistory.length - 1);
+    setHistory((prev) => {
+      const nextHistory = prev.slice(0, historyIndex + 1);
+      nextHistory.push(resolvedId);
+      return nextHistory;
+    });
+    setHistoryIndex((prev) => prev + 1);
   };
 
   const goBack = () => {
