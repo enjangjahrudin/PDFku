@@ -10,7 +10,8 @@ import {
   CornerDownRight,
   Scissors,
   Copy,
-  ClipboardPaste
+  ClipboardPaste,
+  FolderPlus
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { downloadBlob } from '../../utils/formatters';
@@ -25,6 +26,7 @@ interface ContextMenuProps {
   onDelete: (file: VirtualFile) => void;
   onToggleFavorite: (id: string) => void;
   onSetColorTag: (id: string, color: string | undefined) => void;
+  onNewFolder?: (parentId?: string | null, parentName?: string) => void;
   onMove?: (file: VirtualFile) => void;
   onCut?: (file: VirtualFile) => void;
   onCopy?: (file: VirtualFile) => void;
@@ -45,6 +47,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onDelete,
   onToggleFavorite,
   onSetColorTag,
+  onNewFolder,
   onMove,
   onCut,
   onCopy,
@@ -98,6 +101,19 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <Eye className="w-4 h-4 text-blue-600" />
             <span className="font-medium">Buka / Pratinjau</span>
           </button>
+
+          {file.isFolder && onNewFolder && (
+            <button
+              onClick={() => {
+                onClose();
+                onNewFolder(file.id, file.name);
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-emerald-50 text-emerald-700 transition text-left font-medium"
+            >
+              <FolderPlus className="w-4 h-4 text-emerald-600" />
+              <span>+ Buat Sub-folder di Sini</span>
+            </button>
+          )}
 
           {!file.isFolder && file.blob && (
             <button

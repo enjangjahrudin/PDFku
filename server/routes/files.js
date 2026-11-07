@@ -285,18 +285,23 @@ router.post('/folder', async (req, res) => {
     const targetParentId = resolveUserFolderId(parentId, userId);
     const cleanName = name.trim();
 
-    // Cek apakah folder dengan nama yang sama sudah ada untuk user ini
-    const existing = await db.get(`
-      SELECT * FROM folders 
-      WHERE user_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))
-      LIMIT 1
-    `, [userId, cleanName]);
+    // Cek apakah folder dengan nama yang sama sudah ada untuk user ini di folder induk yang sama
+    let existing;
+    if (targetParentId) {
+      existing = await db.get(`
+        SELECT * FROM folders 
+        WHERE user_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND parent_id = ?
+        LIMIT 1
+      `, [userId, cleanName, targetParentId]);
+    } else {
+      existing = await db.get(`
+        SELECT * FROM folders 
+        WHERE user_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND (parent_id IS NULL OR parent_id = '')
+        LIMIT 1
+      `, [userId, cleanName]);
+    }
 
     if (existing) {
-      if (targetParentId && existing.parent_id !== targetParentId) {
-        await db.run('UPDATE folders SET parent_id = ? WHERE id = ?', [targetParentId, existing.id]);
-        existing.parent_id = targetParentId;
-      }
       return res.status(200).json({ success: true, folder: existing });
     }
 

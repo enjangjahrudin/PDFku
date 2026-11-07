@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { X, FolderPlus, Edit2 } from 'lucide-react';
+import { X, FolderPlus, Edit2, Folder } from 'lucide-react';
 
 interface FolderDialogProps {
   isOpen: boolean;
   mode: 'create' | 'rename';
   initialName?: string;
+  parentName?: string | null;
   onClose: () => void;
   onSubmit: (name: string, colorTag?: string) => void;
 }
@@ -13,6 +14,7 @@ export const FolderDialog: React.FC<FolderDialogProps> = ({
   isOpen,
   mode,
   initialName = '',
+  parentName,
   onClose,
   onSubmit
 }) => {
@@ -53,6 +55,15 @@ export const FolderDialog: React.FC<FolderDialogProps> = ({
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {mode === 'create' && parentName && (
+          <div className="mb-3 px-2.5 py-1.5 bg-blue-50/70 border border-blue-100/80 rounded-lg flex items-center space-x-2 text-[11px] text-blue-700">
+            <Folder className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <span className="truncate">
+              Lokasi: <span className="font-semibold text-blue-900">{parentName}</span>
+            </span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>

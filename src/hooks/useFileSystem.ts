@@ -440,9 +440,9 @@ export function useFileSystem() {
     const cleanName = name.trim() || 'Folder Baru';
     const finalColor = colorTag || '#3b82f6';
 
-    // Cek apakah di database lokal sudah ada folder dengan nama yang sama
+    // Cek apakah di database lokal sudah ada folder dengan nama yang sama di folder induk yang sama
     const existingLocal = await db.files
-      .filter((f) => !!f.isFolder && !f.isDeleted && f.name.trim().toLowerCase() === cleanName.toLowerCase())
+      .filter((f) => !!f.isFolder && !f.isDeleted && f.name.trim().toLowerCase() === cleanName.toLowerCase() && (f.parentId || null) === (finalParentId || null))
       .first();
 
     let folderId = existingLocal?.id || ('folder-' + now + '-' + Math.random().toString(36).substring(2, 6));

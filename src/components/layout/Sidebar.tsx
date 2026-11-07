@@ -26,7 +26,7 @@ interface SidebarProps {
   onNavigate: (folderId: string | null) => void;
   activeNav: 'folder' | 'recent' | 'favorites' | 'recycle_bin';
   setActiveNav: (nav: 'folder' | 'recent' | 'favorites' | 'recycle_bin') => void;
-  onNewFolder: () => void;
+  onNewFolder: (targetParentId?: string | null, parentName?: string) => void;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (id: string, name: string) => void;
   onMoveFolder?: (id: string, name: string) => void;
@@ -101,11 +101,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (folderTree.length > 0) {
       setExpandedFolders((prev) => {
         const next = { ...prev };
-        folderTree.forEach((f) => {
-          if (next[f.id] === undefined) {
-            next[f.id] = true;
-          }
-        });
+        const expandAll = (nodes: FolderNode[]) => {
+          nodes.forEach((f) => {
+            if (next[f.id] === undefined) {
+              next[f.id] = true;
+            }
+            if (f.children && f.children.length > 0) {
+              expandAll(f.children);
+            }
+          });
+        };
+        expandAll(folderTree);
         return next;
       });
     }
@@ -138,12 +144,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div
           onClick={() => handleFolderClick(node.id)}
           onContextMenu={(e) => {
-            if (!isRoot) {
-              e.preventDefault();
-              e.stopPropagation();
-              setMenuOpenNodeId(node.id);
-              setMenuPos({ x: e.clientX, y: e.clientY });
-            }
+            e.preventDefault();
+            e.stopPropagation();
+            setMenuOpenNodeId(node.id);
+            setMenuPos({ x: e.clientX, y: e.clientY });
           }}
           style={{ paddingLeft: `${depth * 14 + 10}px` }}
           className={`group flex items-center justify-between py-1 px-2 my-0.5 rounded-md text-xs cursor-pointer transition ${
@@ -181,20 +185,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
             )}
 
-            {!isRoot && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setMenuOpenNodeId(menuOpenNodeId === node.id ? null : node.id);
-                  setMenuPos({ x: rect.right, y: rect.bottom });
-                }}
-                className="p-0.5 text-gray-400 hover:text-gray-700 hover:bg-gray-300/60 rounded opacity-0 group-hover:opacity-100 transition"
-                title="Pilihan Folder"
-              >
-                <MoreVertical className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setMenuOpenNodeId(menuOpenNodeId === node.id ? null : node.id);
+                setMenuPos({ x: rect.right, y: rect.bottom });
+              }}
+              className="p-0.5 text-gray-400 hover:text-gray-700 hover:bg-gray-300/60 rounded opacity-0 group-hover:opacity-100 transition"
+              title="Pilihan Folder"
+            >
+              <MoreVertical className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
 
@@ -266,11 +268,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               onClick={() => {
-                onNewFolder();
+                onNewFolder(null, 'Beranda (Home)');
                 if (onMobileClose) onMobileClose();
               }}
               className="p-0.5 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-800"
-              title="Buat folder baru"
+              title="Buat folder baru di Beranda"
             >
               <FolderPlus className="w-3.5 h-3.5" />
             </button>
@@ -324,109 +326,129 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Floating Action Menu untuk Folder (Move, Cut, Copy, Paste, Rename & Hapus) */}
-      {menuOpenNodeId && menuPos && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed',
-            left: `${Math.min(menuPos.x, window.innerWidth - 200)}px`,
-            top: `${Math.min(menuPos.y, window.innerHeight - 200)}px`,
-            zIndex: 9999
-          }}
-          className="bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-48 animate-in fade-in zoom-in-95 duration-75 text-xs text-gray-700 select-none"
-        >
-          {onMoveFolder && (
-            <button
-              onClick={() => {
-                const node = findNodeInTree(folderTree, menuOpenNodeId);
-                if (node) onMoveFolder(node.id, node.name);
-                setMenuOpenNodeId(null);
-                setMenuPos(null);
-              }}
-              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-blue-50 hover:text-blue-600 transition text-left"
-            >
-              <CornerDownRight className="w-3.5 h-3.5 text-blue-600" />
-              <span>Pindahkan Folder...</span>
-            </button>
-          )}
+      {/* Floating Action Menu untuk Folder (Sub-folder, Move, Cut, Copy, Paste, Rename & Hapus) */}
+      {menuOpenNodeId && menuPos && (() => {
+        const node = findNodeInTree(folderTree, menuOpenNodeId);
+        const isRootNode = node ? isSystemFolder(node.id) : false;
 
-          {onCutFolder && (
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              left: `${Math.min(menuPos.x, window.innerWidth - 200)}px`,
+              top: `${Math.min(menuPos.y, window.innerHeight - 250)}px`,
+              zIndex: 9999
+            }}
+            className="bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-52 animate-in fade-in zoom-in-95 duration-75 text-xs text-gray-700 select-none"
+          >
+            {/* 1. Buat Sub-folder Baru (selalu tersedia di semua folder) */}
             <button
               onClick={() => {
-                const node = findNodeInTree(folderTree, menuOpenNodeId);
-                if (node) onCutFolder(node.id, node.name);
-                setMenuOpenNodeId(null);
-                setMenuPos(null);
-              }}
-              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-orange-50 hover:text-orange-600 transition text-left"
-            >
-              <Scissors className="w-3.5 h-3.5 text-orange-600" />
-              <span>Potong Folder (Cut)</span>
-            </button>
-          )}
-
-          {onCopyFolder && (
-            <button
-              onClick={() => {
-                const node = findNodeInTree(folderTree, menuOpenNodeId);
-                if (node) onCopyFolder(node.id, node.name);
-                setMenuOpenNodeId(null);
-                setMenuPos(null);
-              }}
-              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-indigo-50 hover:text-indigo-600 transition text-left"
-            >
-              <Copy className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Salin Folder (Copy)</span>
-            </button>
-          )}
-
-          {canPaste && onPasteToFolder && (
-            <button
-              onClick={() => {
-                onPasteToFolder(menuOpenNodeId);
+                if (node) onNewFolder(node.id, node.name);
                 setMenuOpenNodeId(null);
                 setMenuPos(null);
               }}
               className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-emerald-50 text-emerald-700 transition text-left font-medium"
             >
-              <ClipboardPaste className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Tempel ke Folder Ini ({clipboardCount})</span>
+              <FolderPlus className="w-3.5 h-3.5 text-emerald-600" />
+              <span>+ Buat Sub-folder Baru</span>
             </button>
-          )}
 
-          <div className="h-px bg-gray-100 my-1" />
+            {/* 2. Tempel / Paste ke Folder Ini */}
+            {canPaste && onPasteToFolder && (
+              <button
+                onClick={() => {
+                  onPasteToFolder(menuOpenNodeId);
+                  setMenuOpenNodeId(null);
+                  setMenuPos(null);
+                }}
+                className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-emerald-50 text-emerald-700 transition text-left font-medium"
+              >
+                <ClipboardPaste className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Tempel ke Sini ({clipboardCount})</span>
+              </button>
+            )}
 
-          <button
-            onClick={() => {
-              const node = findNodeInTree(folderTree, menuOpenNodeId);
-              if (node && onRenameFolder) {
-                onRenameFolder(node.id, node.name);
-              }
-              setMenuOpenNodeId(null);
-              setMenuPos(null);
-            }}
-            className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-blue-50 hover:text-blue-600 transition text-left"
-          >
-            <Edit2 className="w-3.5 h-3.5 text-blue-600" />
-            <span>Ganti Nama (Rename)</span>
-          </button>
-          <button
-            onClick={() => {
-              const node = findNodeInTree(folderTree, menuOpenNodeId);
-              if (node && onDeleteFolder) {
-                onDeleteFolder(node.id, node.name);
-              }
-              setMenuOpenNodeId(null);
-              setMenuPos(null);
-            }}
-            className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-red-50 text-red-600 transition text-left border-t border-gray-100"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-red-600" />
-            <span>Hapus Folder</span>
-          </button>
-        </div>
-      )}
+            {!isRootNode && (
+              <>
+                <div className="h-px bg-gray-100 my-1" />
+
+                {onMoveFolder && (
+                  <button
+                    onClick={() => {
+                      if (node) onMoveFolder(node.id, node.name);
+                      setMenuOpenNodeId(null);
+                      setMenuPos(null);
+                    }}
+                    className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-blue-50 hover:text-blue-600 transition text-left"
+                  >
+                    <CornerDownRight className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Pindahkan Folder...</span>
+                  </button>
+                )}
+
+                {onCutFolder && (
+                  <button
+                    onClick={() => {
+                      if (node) onCutFolder(node.id, node.name);
+                      setMenuOpenNodeId(null);
+                      setMenuPos(null);
+                    }}
+                    className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-orange-50 hover:text-orange-600 transition text-left"
+                  >
+                    <Scissors className="w-3.5 h-3.5 text-orange-600" />
+                    <span>Potong Folder (Cut)</span>
+                  </button>
+                )}
+
+                {onCopyFolder && (
+                  <button
+                    onClick={() => {
+                      if (node) onCopyFolder(node.id, node.name);
+                      setMenuOpenNodeId(null);
+                      setMenuPos(null);
+                    }}
+                    className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-indigo-50 hover:text-indigo-600 transition text-left"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Salin Folder (Copy)</span>
+                  </button>
+                )}
+
+                <div className="h-px bg-gray-100 my-1" />
+
+                <button
+                  onClick={() => {
+                    if (node && onRenameFolder) {
+                      onRenameFolder(node.id, node.name);
+                    }
+                    setMenuOpenNodeId(null);
+                    setMenuPos(null);
+                  }}
+                  className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-blue-50 hover:text-blue-600 transition text-left"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Ganti Nama (Rename)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (node && onDeleteFolder) {
+                      onDeleteFolder(node.id, node.name);
+                    }
+                    setMenuOpenNodeId(null);
+                    setMenuPos(null);
+                  }}
+                  className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-red-50 text-red-600 transition text-left border-t border-gray-100"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  <span>Hapus Folder</span>
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })()}
     </>
   );
 };

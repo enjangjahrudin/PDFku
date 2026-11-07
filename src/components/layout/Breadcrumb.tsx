@@ -6,6 +6,7 @@ import {
   Search,
   X,
   Folder,
+  FolderPlus,
   ChevronRight,
   HardDrive,
   Menu,
@@ -31,6 +32,7 @@ interface BreadcrumbProps {
   onSearchChange: (query: string) => void;
   activeNav: string;
   onOpenMobileSidebar?: () => void;
+  onNewFolder?: (parentId?: string | null, parentName?: string) => void;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (id: string, name: string) => void;
   onMoveFolder?: (id: string, name: string) => void;
@@ -52,6 +54,7 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
   onSearchChange,
   activeNav,
   onOpenMobileSidebar,
+  onNewFolder,
   onRenameFolder,
   onDeleteFolder,
   onMoveFolder,
@@ -166,73 +169,91 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
         </div>
       </div>
 
-      {/* Action: Pindahkan, Ganti Nama & Hapus Folder Aktif (jika bukan folder sistem) */}
-      {currentFolderId && !isSystemFolder(currentFolderId) && (
+      {/* Action buttons saat berada di dalam folder tertentu */}
+      {currentFolderId && (
         <div className="flex items-center space-x-1 shrink-0">
-          {onMoveFolder && (
+          {onNewFolder && (
             <button
               onClick={() => {
-                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
-                onMoveFolder(currentFolderId, currentName);
+                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder Ini';
+                onNewFolder(currentFolderId, currentName);
               }}
-              className="flex items-center space-x-1 px-2 py-1 text-xs text-blue-700 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100 rounded-md border border-blue-200 transition font-medium"
-              title="Pindahkan folder ini beserta seluruh isinya ke folder lain"
+              className="flex items-center space-x-1 px-2 py-1 text-xs text-emerald-700 hover:text-emerald-800 bg-emerald-50/80 hover:bg-emerald-100 rounded-md border border-emerald-200 transition font-medium"
+              title="Buat sub-folder baru di dalam folder ini"
             >
-              <CornerDownRight className="w-3.5 h-3.5 text-blue-600" />
-              <span className="hidden md:inline text-[11px]">Pindahkan Folder</span>
+              <FolderPlus className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden sm:inline text-[11px]">+ Sub-folder</span>
             </button>
           )}
 
-          {onCutFolder && (
-            <button
-              onClick={() => {
-                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
-                onCutFolder(currentFolderId, currentName);
-              }}
-              className="flex items-center space-x-1 px-1.5 py-1 text-xs text-gray-700 hover:text-orange-600 hover:bg-orange-50 rounded-md border border-gray-200 transition"
-              title="Potong folder ini (Cut)"
-            >
-              <Scissors className="w-3.5 h-3.5 text-orange-600" />
-              <span className="hidden lg:inline text-[11px]">Cut</span>
-            </button>
-          )}
+          {!isSystemFolder(currentFolderId) && (
+            <>
+              {onMoveFolder && (
+                <button
+                  onClick={() => {
+                    const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                    onMoveFolder(currentFolderId, currentName);
+                  }}
+                  className="flex items-center space-x-1 px-2 py-1 text-xs text-blue-700 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100 rounded-md border border-blue-200 transition font-medium"
+                  title="Pindahkan folder ini beserta seluruh isinya ke folder lain"
+                >
+                  <CornerDownRight className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="hidden md:inline text-[11px]">Pindahkan</span>
+                </button>
+              )}
 
-          {onCopyFolder && (
-            <button
-              onClick={() => {
-                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
-                onCopyFolder(currentFolderId, currentName);
-              }}
-              className="flex items-center space-x-1 px-1.5 py-1 text-xs text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-md border border-gray-200 transition"
-              title="Salin folder ini (Copy)"
-            >
-              <Copy className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="hidden lg:inline text-[11px]">Copy</span>
-            </button>
-          )}
+              {onCutFolder && (
+                <button
+                  onClick={() => {
+                    const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                    onCutFolder(currentFolderId, currentName);
+                  }}
+                  className="flex items-center space-x-1 px-1.5 py-1 text-xs text-gray-700 hover:text-orange-600 hover:bg-orange-50 rounded-md border border-gray-200 transition"
+                  title="Potong folder ini (Cut)"
+                >
+                  <Scissors className="w-3.5 h-3.5 text-orange-600" />
+                  <span className="hidden lg:inline text-[11px]">Cut</span>
+                </button>
+              )}
 
-          <button
-            onClick={() => {
-              const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
-              if (onRenameFolder) onRenameFolder(currentFolderId, currentName);
-            }}
-            className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-md border border-gray-200 transition"
-            title="Ganti nama folder ini"
-          >
-            <Edit2 className="w-3.5 h-3.5 text-blue-600" />
-            <span className="hidden md:inline font-medium text-[11px]">Ganti Nama</span>
-          </button>
-          <button
-            onClick={() => {
-              const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
-              if (onDeleteFolder) onDeleteFolder(currentFolderId, currentName);
-            }}
-            className="flex items-center space-x-1 px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md border border-red-200 transition"
-            title="Hapus folder ini beserta seluruh isinya"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-red-600" />
-            <span className="hidden md:inline font-medium text-[11px]">Hapus Folder</span>
-          </button>
+              {onCopyFolder && (
+                <button
+                  onClick={() => {
+                    const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                    onCopyFolder(currentFolderId, currentName);
+                  }}
+                  className="flex items-center space-x-1 px-1.5 py-1 text-xs text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-md border border-gray-200 transition"
+                  title="Salin folder ini (Copy)"
+                >
+                  <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="hidden lg:inline text-[11px]">Copy</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                  if (onRenameFolder) onRenameFolder(currentFolderId, currentName);
+                }}
+                className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-md border border-gray-200 transition"
+                title="Ganti nama folder ini"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-blue-600" />
+                <span className="hidden md:inline font-medium text-[11px]">Ganti Nama</span>
+              </button>
+              <button
+                onClick={() => {
+                  const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                  if (onDeleteFolder) onDeleteFolder(currentFolderId, currentName);
+                }}
+                className="flex items-center space-x-1 px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md border border-red-200 transition"
+                title="Hapus folder ini beserta seluruh isinya"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                <span className="hidden md:inline font-medium text-[11px]">Hapus</span>
+              </button>
+            </>
+          )}
         </div>
       )}
 

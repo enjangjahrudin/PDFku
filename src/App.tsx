@@ -19,7 +19,7 @@ import { ConfirmDeleteModal } from './components/explorer/ConfirmDeleteModal';
 import { useFileSystem } from './hooks/useFileSystem';
 import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/auth/LoginScreen';
-import { VirtualFile } from './types';
+import { VirtualFile, FolderNode } from './types';
 import { getFileExtension } from './utils/formatters';
 import { Camera, Folder, FileText, Sparkles, Layers, Scan, Loader2 } from 'lucide-react';
 import JSZip from 'jszip';
@@ -91,6 +91,8 @@ export function App() {
     mode: 'create' | 'rename';
     targetId?: string;
     initialName?: string;
+    parentId?: string | null;
+    parentName?: string;
   }>({ isOpen: false, mode: 'create' });
 
   // Delete Folder Confirmation Modal state
@@ -99,6 +101,37 @@ export function App() {
     folderId: string;
     folderName: string;
   }>({ isOpen: false, folderId: '', folderName: '' });
+
+  const findFolderNodeInTree = (nodes: FolderNode[], id: string): FolderNode | null => {
+    for (const n of nodes) {
+      if (n.id === id) return n;
+      if (n.children && n.children.length > 0) {
+        const found = findFolderNodeInTree(n.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const handleTriggerNewFolder = (parentId?: string | null, parentName?: string) => {
+    const targetParent = parentId !== undefined ? parentId : currentFolderId;
+    let targetName = parentName;
+
+    if (!targetName && targetParent) {
+      const node = findFolderNodeInTree(folderTree, targetParent);
+      targetName = node ? node.name : 'Folder Ini';
+    } else if (!targetName && !targetParent) {
+      targetName = 'Beranda (Home)';
+    }
+
+    setFolderDialogState({
+      isOpen: true,
+      mode: 'create',
+      initialName: 'Folder Baru',
+      parentId: targetParent,
+      parentName: targetName
+    });
+  };
 
   const handleTriggerRenameFolder = (id: string, name: string) => {
     setFolderDialogState({
@@ -356,7 +389,7 @@ export function App() {
 
       {/* 2. Ribbon Action Toolbar (Windows 11 style) */}
       <Toolbar
-        onNewFolder={() => setFolderDialogState({ isOpen: true, mode: 'create', initialName: 'Folder Baru' })}
+        onNewFolder={() => handleTriggerNewFolder(currentFolderId)}
         onOpenScanner={() => setIsScannerOpen(true)}
         onUploadFile={handleUploadFiles}
         selectedCount={selectedIds.length}
@@ -425,6 +458,7 @@ export function App() {
         onSearchChange={setSearchQuery}
         activeNav={activeNav}
         onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
+        onNewFolder={handleTriggerNewFolder}
         onRenameFolder={handleTriggerRenameFolder}
         onDeleteFolder={handleTriggerDeleteFolder}
         onMoveFolder={(id, name) => setMoveDialogState({ isOpen: true, items: [{ id, name, isFolder: true }] })}
@@ -441,7 +475,7 @@ export function App() {
           onNavigate={navigateToFolder}
           activeNav={activeNav}
           setActiveNav={setActiveNav}
-          onNewFolder={() => setFolderDialogState({ isOpen: true, mode: 'create', initialName: 'Folder Baru' })}
+          onNewFolder={handleTriggerNewFolder}
           onRenameFolder={handleTriggerRenameFolder}
           onDeleteFolder={handleTriggerDeleteFolder}
           onMoveFolder={(id, name) => setMoveDialogState({ isOpen: true, items: [{ id, name, isFolder: true }] })}
@@ -559,6 +593,7 @@ export function App() {
           }}
           onToggleFavorite={toggleFavorite}
           onSetColorTag={setColorTag}
+          onNewFolder={handleTriggerNewFolder}
           onMove={(file) => setMoveDialogState({ isOpen: true, items: [{ id: file.id, name: file.name, isFolder: file.isFolder }] })}
           onCut={(file) => cutItems([file.id])}
           onCopy={(file) => copyItems([file.id])}
@@ -587,10 +622,14 @@ export function App() {
         isOpen={folderDialogState.isOpen}
         mode={folderDialogState.mode}
         initialName={folderDialogState.initialName}
+        parentName={folderDialogState.parentName}
         onClose={() => setFolderDialogState({ isOpen: false, mode: 'create' })}
         onSubmit={(name, colorTag) => {
           if (folderDialogState.mode === 'create') {
-            createFolder(name, colorTag);
+            const targetParent = folderDialogState.parentId !== undefined 
+              ? folderDialogState.parentId 
+              : currentFolderId;
+            createFolder(name, targetParent, colorTag);
           } else if (folderDialogState.targetId) {
             renameFile(folderDialogState.targetId, name);
           }
