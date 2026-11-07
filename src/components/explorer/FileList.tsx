@@ -15,6 +15,7 @@ import { formatFileSize, formatDate } from '../../utils/formatters';
 interface FileListProps {
   files: VirtualFile[];
   selectedIds: string[];
+  cutItemIds?: string[];
   onSelect: (id: string, multi: boolean) => void;
   onOpen: (file: VirtualFile) => void;
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
@@ -25,6 +26,7 @@ interface FileListProps {
 export const FileList: React.FC<FileListProps> = ({
   files,
   selectedIds,
+  cutItemIds,
   onSelect,
   onOpen,
   onContextMenu,
@@ -77,6 +79,7 @@ export const FileList: React.FC<FileListProps> = ({
         <tbody>
           {files.map((file) => {
             const isSelected = selectedIds.includes(file.id);
+            const isCut = cutItemIds?.includes(file.id);
 
             return (
               <tr
@@ -85,6 +88,8 @@ export const FileList: React.FC<FileListProps> = ({
                 onDoubleClick={() => onOpen(file)}
                 onContextMenu={(e) => onContextMenu(e, file)}
                 className={`border-b border-gray-100 cursor-pointer transition ${
+                  isCut ? 'opacity-40 italic' : ''
+                } ${
                   isSelected
                     ? 'bg-blue-50/90 text-blue-900 font-medium'
                     : 'hover:bg-gray-100/70 text-gray-700'

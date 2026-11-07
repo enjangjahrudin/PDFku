@@ -57,6 +57,12 @@ export function App() {
     addFile,
     renameFile,
     moveFiles,
+    moveFolder,
+    clipboard,
+    copyItems,
+    cutItems,
+    pasteItems,
+    clearClipboard,
     toggleFavorite,
     setColorTag,
     deleteFiles,
@@ -73,11 +79,11 @@ export function App() {
   const [previewFile, setPreviewFile] = useState<VirtualFile | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
-  // Move Dialog state
+  // Move Dialog state (Mendukung File & Folder)
   const [moveDialogState, setMoveDialogState] = useState<{
     isOpen: boolean;
-    files: VirtualFile[];
-  }>({ isOpen: false, files: [] });
+    items: { id: string; name: string; isFolder?: boolean }[];
+  }>({ isOpen: false, items: [] });
 
   // Folder Dialog state (Create / Rename)
   const [folderDialogState, setFolderDialogState] = useState<{
@@ -118,12 +124,14 @@ export function App() {
     file: VirtualFile | null;
   } | null>(null);
 
-  // Keyboard Shortcuts: Delete, F2, Escape
+  // Keyboard Shortcuts: Delete, F2, Escape, Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (folderDialogState.isOpen || isScannerOpen || isConverterOpen || isCompressorOpen || isPdfToolsOpen || previewFile) {
         return;
       }
+
+      const isCtrl = e.ctrlKey || e.metaKey;
 
       if (e.key === 'Delete' && selectedIds.length > 0) {
         deleteFiles(selectedIds, activeNav === 'recycle_bin');
@@ -137,18 +145,34 @@ export function App() {
             initialName: file.name
           });
         }
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      } else if (isCtrl && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         setSelectedIds(files.map(f => f.id));
+      } else if (isCtrl && (e.key === 'c' || e.key === 'C')) {
+        if (selectedIds.length > 0) {
+          e.preventDefault();
+          copyItems(selectedIds);
+        }
+      } else if (isCtrl && (e.key === 'x' || e.key === 'X')) {
+        if (selectedIds.length > 0) {
+          e.preventDefault();
+          cutItems(selectedIds);
+        }
+      } else if (isCtrl && (e.key === 'v' || e.key === 'V')) {
+        if (clipboard && clipboard.items.length > 0) {
+          e.preventDefault();
+          pasteItems();
+        }
       } else if (e.key === 'Escape') {
         setSelectedIds([]);
         setContextMenu(null);
+        clearClipboard();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds, files, activeNav, deleteFiles, folderDialogState, isScannerOpen, isConverterOpen, isCompressorOpen, isPdfToolsOpen, previewFile]);
+  }, [selectedIds, files, activeNav, deleteFiles, folderDialogState, isScannerOpen, isConverterOpen, isCompressorOpen, isPdfToolsOpen, previewFile, copyItems, cutItems, pasteItems, clearClipboard, clipboard]);
 
   // Handle seleksi berkas
   const handleSelectFile = (id: string, multi: boolean) => {
@@ -353,11 +377,19 @@ export function App() {
           }
         }}
         onMoveSelected={() => {
-          const filesToMove = files.filter(f => selectedIds.includes(f.id));
-          if (filesToMove.length > 0) {
-            setMoveDialogState({ isOpen: true, files: filesToMove });
+          const itemsToMove = files
+            .filter(f => selectedIds.includes(f.id))
+            .map(f => ({ id: f.id, name: f.name, isFolder: f.isFolder }));
+          if (itemsToMove.length > 0) {
+            setMoveDialogState({ isOpen: true, items: itemsToMove });
           }
         }}
+        onCutSelected={() => cutItems(selectedIds)}
+        onCopySelected={() => copyItems(selectedIds)}
+        onPaste={() => pasteItems()}
+        canPaste={clipboard !== null && clipboard.items.length > 0}
+        clipboardCount={clipboard?.items.length || 0}
+        clipboardAction={clipboard?.action || null}
         onBulkDownloadZip={handleBulkDownloadZip}
         onBulkMergePdf={handleBulkMergePdf}
         viewMode={viewMode}
@@ -395,6 +427,9 @@ export function App() {
         onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
         onRenameFolder={handleTriggerRenameFolder}
         onDeleteFolder={handleTriggerDeleteFolder}
+        onMoveFolder={(id, name) => setMoveDialogState({ isOpen: true, items: [{ id, name, isFolder: true }] })}
+        onCutFolder={(id) => cutItems([id])}
+        onCopyFolder={(id) => copyItems([id])}
       />
 
       {/* 4. Main Body: Sidebar + File Explorer View */}
@@ -409,6 +444,12 @@ export function App() {
           onNewFolder={() => setFolderDialogState({ isOpen: true, mode: 'create', initialName: 'Folder Baru' })}
           onRenameFolder={handleTriggerRenameFolder}
           onDeleteFolder={handleTriggerDeleteFolder}
+          onMoveFolder={(id, name) => setMoveDialogState({ isOpen: true, items: [{ id, name, isFolder: true }] })}
+          onCutFolder={(id) => cutItems([id])}
+          onCopyFolder={(id) => copyItems([id])}
+          onPasteToFolder={(targetFolderId) => pasteItems(targetFolderId)}
+          canPaste={clipboard !== null && clipboard.items.length > 0}
+          clipboardCount={clipboard?.items.length || 0}
           isMobileOpen={isMobileSidebarOpen}
           onMobileClose={() => setIsMobileSidebarOpen(false)}
         />
@@ -426,6 +467,7 @@ export function App() {
             <FileGrid
               files={files}
               selectedIds={selectedIds}
+              cutItemIds={clipboard?.action === 'cut' ? clipboard.items.map(i => i.id) : []}
               onSelect={handleSelectFile}
               onOpen={handleOpenFile}
               onContextMenu={handleContextMenu}
@@ -435,6 +477,7 @@ export function App() {
             <FileList
               files={files}
               selectedIds={selectedIds}
+              cutItemIds={clipboard?.action === 'cut' ? clipboard.items.map(i => i.id) : []}
               onSelect={handleSelectFile}
               onOpen={handleOpenFile}
               onContextMenu={handleContextMenu}
@@ -516,20 +559,25 @@ export function App() {
           }}
           onToggleFavorite={toggleFavorite}
           onSetColorTag={setColorTag}
-          onMove={(file) => setMoveDialogState({ isOpen: true, files: [file] })}
+          onMove={(file) => setMoveDialogState({ isOpen: true, items: [{ id: file.id, name: file.name, isFolder: file.isFolder }] })}
+          onCut={(file) => cutItems([file.id])}
+          onCopy={(file) => copyItems([file.id])}
+          onPaste={() => pasteItems(contextMenu.file?.isFolder ? contextMenu.file.id : undefined)}
+          canPaste={clipboard !== null && clipboard.items.length > 0}
+          clipboardCount={clipboard?.items.length || 0}
           isRecycleBin={activeNav === 'recycle_bin'}
           onRestore={(file) => restoreFiles([file.id])}
         />
       )}
 
-      {/* Move Files Dialog */}
+      {/* Move Files / Folders Dialog */}
       <MoveDialog
         isOpen={moveDialogState.isOpen}
-        filesToMove={moveDialogState.files}
+        itemsToMove={moveDialogState.items}
         folderTree={folderTree}
-        onClose={() => setMoveDialogState({ isOpen: false, files: [] })}
+        onClose={() => setMoveDialogState({ isOpen: false, items: [] })}
         onConfirmMove={(targetFolderId) => {
-          const ids = moveDialogState.files.map(f => f.id);
+          const ids = moveDialogState.items.map(i => i.id);
           moveFiles(ids, targetFolderId);
         }}
       />

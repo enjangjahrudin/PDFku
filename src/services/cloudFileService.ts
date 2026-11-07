@@ -207,6 +207,24 @@ export const cloudFileService = {
     return data.folder;
   },
 
+  async moveFolder(id: string, parentId: string | null): Promise<ServerFolder> {
+    const res = await fetch(`/api/files/folder/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authService.getAuthHeader()
+      },
+      body: JSON.stringify({ parentId: parentId || null })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || 'Gagal memindahkan folder.');
+    }
+
+    return data.folder;
+  },
+
   async deleteFolder(id: string, name?: string): Promise<void> {
     const query = name ? `?name=${encodeURIComponent(name)}` : '';
     const res = await fetch(`/api/files/folder/${encodeURIComponent(id)}${query}`, {

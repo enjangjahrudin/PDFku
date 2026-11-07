@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { VirtualFile, FolderNode } from '../types';
+import { VirtualFile, FolderNode, ClipboardState, ClipboardItem } from '../types';
 import { getDatabaseForUser, initializeUserDefaultFolders, normalizeFolderId } from '../services/db';
 import { authService } from '../services/authService';
 import { cloudFileService } from '../services/cloudFileService';
@@ -642,20 +642,174 @@ export function useFileSystem() {
     await refreshAll();
   };
 
-  // Pindahkan berkas / folder ke folder tujuan
+  // Pindahkan berkas / folder ke folder tujuan (dengan proteksi hierarki)
   const moveFiles = async (ids: string[], targetFolderId: string | null) => {
     const finalTargetId = normalizeFolderId(targetFolderId, userId);
-    await db.files.where('id').anyOf(ids).modify({ parentId: finalTargetId, updatedAt: Date.now() });
-    if (authService.getToken()) {
-      for (const id of ids) {
-        try {
-          await cloudFileService.updateFile(id, { folderId: finalTargetId || undefined });
-        } catch (e) {}
+
+    for (const id of ids) {
+      const item = await db.files.get(id);
+      if (!item) continue;
+
+      if (item.isFolder) {
+        if (id === finalTargetId) continue;
+        // Cek agar tidak memindahkan folder ke dalam anak subfoldernya sendiri
+        let isDescendant = false;
+        let cur = finalTargetId ? await db.files.get(finalTargetId) : null;
+        while (cur) {
+          if (cur.id === id) { isDescendant = true; break; }
+          cur = cur.parentId ? await db.files.get(cur.parentId) : null;
+        }
+        if (isDescendant) continue;
+
+        await db.files.update(id, { parentId: finalTargetId, updatedAt: Date.now() });
+        if (authService.getToken()) {
+          try {
+            await cloudFileService.moveFolder(id, finalTargetId);
+          } catch (e) {
+            console.warn('Gagal memindahkan folder di cloud:', e);
+          }
+        }
+      } else {
+        await db.files.update(id, { parentId: finalTargetId, updatedAt: Date.now() });
+        if (authService.getToken()) {
+          try {
+            await cloudFileService.updateFile(id, { folderId: finalTargetId || undefined });
+          } catch (e) {}
+        }
       }
     }
+
     setSelectedIds([]);
     await refreshAll();
   };
+
+  // Pindahkan folder spesifik
+  const moveFolder = async (folderId: string, targetFolderId: string | null) => {
+    return moveFiles([folderId], targetFolderId);
+  };
+
+  // State Clipboard untuk Copy, Cut, Paste
+  const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
+
+  const copyItems = useCallback(async (ids?: string[]) => {
+    const targetIds = ids && ids.length > 0 ? ids : selectedIds;
+    if (targetIds.length === 0) return;
+
+    const items: ClipboardItem[] = [];
+    for (const id of targetIds) {
+      const f = await db.files.get(id);
+      if (f && !f.isDeleted) {
+        items.push({ id: f.id, name: f.name, isFolder: !!f.isFolder });
+      }
+    }
+
+    if (items.length > 0) {
+      setClipboard({ items, action: 'copy' });
+    }
+  }, [selectedIds, db]);
+
+  const cutItems = useCallback(async (ids?: string[]) => {
+    const targetIds = ids && ids.length > 0 ? ids : selectedIds;
+    if (targetIds.length === 0) return;
+
+    const items: ClipboardItem[] = [];
+    for (const id of targetIds) {
+      const f = await db.files.get(id);
+      if (f && !f.isDeleted && !isSystemRootFolder(f.id)) {
+        items.push({ id: f.id, name: f.name, isFolder: !!f.isFolder });
+      }
+    }
+
+    if (items.length > 0) {
+      setClipboard({ items, action: 'cut' });
+    }
+  }, [selectedIds, db, isSystemRootFolder]);
+
+  const clearClipboard = useCallback(() => {
+    setClipboard(null);
+  }, []);
+
+  const pasteItems = useCallback(async (targetFolderId?: string | null) => {
+    if (!clipboard || clipboard.items.length === 0) return;
+
+    const rawTarget = targetFolderId !== undefined ? targetFolderId : currentFolderId;
+    const finalDestId = normalizeFolderId(rawTarget, userId);
+
+    if (clipboard.action === 'cut') {
+      const idsToMove = clipboard.items.map(i => i.id);
+      await moveFiles(idsToMove, finalDestId);
+      setClipboard(null);
+      return;
+    }
+
+    if (clipboard.action === 'copy') {
+      const copyFileToDest = async (origFile: VirtualFile, destId: string | null) => {
+        const now = Date.now();
+        const ext = origFile.name.includes('.') ? '.' + origFile.name.split('.').pop() : '';
+        const base = ext ? origFile.name.slice(0, -ext.length) : origFile.name;
+        const newName = destId === origFile.parentId ? `${base} - Salinan${ext}` : origFile.name;
+
+        let newFileId = 'file-' + now + '-' + Math.random().toString(36).substring(2, 6);
+
+        if (authService.getToken() && origFile.blob) {
+          try {
+            const uploaded = await cloudFileService.uploadFile(origFile.blob, {
+              name: newName,
+              folderId: destId || undefined,
+              ocrText: origFile.ocrText,
+              thumbnail: origFile.thumbnail
+            });
+            if (uploaded?.id) newFileId = uploaded.id;
+          } catch (e) {
+            console.warn('Gagal salin file ke cloud:', e);
+          }
+        }
+
+        const newFile: VirtualFile = {
+          ...origFile,
+          id: newFileId,
+          name: newName,
+          parentId: destId,
+          createdAt: now,
+          updatedAt: now
+        };
+        await db.files.put(newFile);
+      };
+
+      const copyFolderRecursive = async (srcFolderId: string, destParentId: string | null) => {
+        const srcFolder = await db.files.get(srcFolderId);
+        if (!srcFolder) return;
+
+        // Cegah salin ke diri sendiri
+        if (destParentId === srcFolderId) return;
+
+        const folderName = destParentId === srcFolder.parentId ? `${srcFolder.name} - Salinan` : srcFolder.name;
+        const newFolder = await createFolder(folderName, destParentId, srcFolder.colorTag);
+
+        const children = await db.files.filter(f => f.parentId === srcFolderId && !f.isDeleted).toArray();
+        for (const child of children) {
+          if (child.isFolder) {
+            await copyFolderRecursive(child.id, newFolder.id);
+          } else {
+            await copyFileToDest(child, newFolder.id);
+          }
+        }
+      };
+
+      for (const item of clipboard.items) {
+        if (item.isFolder) {
+          await copyFolderRecursive(item.id, finalDestId);
+        } else {
+          const orig = await db.files.get(item.id);
+          if (orig) {
+            await copyFileToDest(orig, finalDestId);
+          }
+        }
+      }
+
+      await refreshAll();
+    }
+  }, [clipboard, currentFolderId, userId, moveFiles, createFolder, refreshAll, db]);
 
   // Pindahkan ke Recycle Bin (soft delete) atau Hapus permanen
   const deleteFiles = async (ids: string[], permanent: boolean = false) => {
@@ -753,6 +907,12 @@ export function useFileSystem() {
     addFile,
     renameFile,
     moveFiles,
+    moveFolder,
+    clipboard,
+    copyItems,
+    cutItems,
+    pasteItems,
+    clearClipboard,
     toggleFavorite,
     setColorTag,
     deleteFiles,

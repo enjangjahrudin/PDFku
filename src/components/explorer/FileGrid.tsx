@@ -15,6 +15,7 @@ import { formatFileSize, formatDate } from '../../utils/formatters';
 interface FileGridProps {
   files: VirtualFile[];
   selectedIds: string[];
+  cutItemIds?: string[];
   onSelect: (id: string, multi: boolean) => void;
   onOpen: (file: VirtualFile) => void;
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
@@ -24,6 +25,7 @@ interface FileGridProps {
 export const FileGrid: React.FC<FileGridProps> = ({
   files,
   selectedIds,
+  cutItemIds,
   onSelect,
   onOpen,
   onContextMenu,
@@ -45,6 +47,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3 p-2.5 sm:p-4 select-none">
       {files.map((file) => {
         const isSelected = selectedIds.includes(file.id);
+        const isCut = cutItemIds?.includes(file.id);
 
         return (
           <div
@@ -53,6 +56,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
             onDoubleClick={() => onOpen(file)}
             onContextMenu={(e) => onContextMenu(e, file)}
             className={`group relative flex flex-col items-center p-2 rounded-lg border transition-all cursor-pointer ${
+              isCut ? 'opacity-40 border-dashed border-orange-400' : ''
+            } ${
               isSelected
                 ? 'bg-blue-50/80 border-blue-400 ring-1 ring-blue-400 shadow-xs'
                 : 'bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300'

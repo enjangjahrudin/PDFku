@@ -14,7 +14,10 @@ import {
   Download,
   CheckSquare,
   Square,
-  Layers
+  Layers,
+  Scissors,
+  Copy,
+  ClipboardPaste
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -28,6 +31,12 @@ interface ToolbarProps {
   onDeleteSelected: () => void;
   onRenameSelected: () => void;
   onMoveSelected?: () => void;
+  onCutSelected?: () => void;
+  onCopySelected?: () => void;
+  onPaste?: () => void;
+  canPaste?: boolean;
+  clipboardCount?: number;
+  clipboardAction?: 'copy' | 'cut' | null;
   onBulkDownloadZip?: () => void;
   onBulkMergePdf?: () => void;
   viewMode: 'grid' | 'details';
@@ -52,6 +61,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onDeleteSelected,
   onRenameSelected,
   onMoveSelected,
+  onCutSelected,
+  onCopySelected,
+  onPaste,
+  canPaste = false,
+  clipboardCount = 0,
+  clipboardAction,
   onBulkDownloadZip,
   onBulkMergePdf,
   viewMode,
@@ -136,6 +151,61 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               <Edit2 className="w-3.5 h-3.5" />
               <span>Rename</span>
             </button>
+
+            {onCutSelected && (
+              <button
+                disabled={selectedCount === 0}
+                onClick={onCutSelected}
+                className={`flex items-center space-x-1 px-2 py-1.5 text-xs rounded-md transition ${
+                  selectedCount > 0
+                    ? 'text-gray-700 hover:bg-gray-200/70 font-medium'
+                    : 'text-gray-400 cursor-not-allowed'
+                }`}
+                title="Potong item terpilih (Ctrl + X)"
+              >
+                <Scissors className="w-3.5 h-3.5 text-orange-600" />
+                <span>Cut</span>
+              </button>
+            )}
+
+            {onCopySelected && (
+              <button
+                disabled={selectedCount === 0}
+                onClick={onCopySelected}
+                className={`flex items-center space-x-1 px-2 py-1.5 text-xs rounded-md transition ${
+                  selectedCount > 0
+                    ? 'text-gray-700 hover:bg-gray-200/70 font-medium'
+                    : 'text-gray-400 cursor-not-allowed'
+                }`}
+                title="Salin item terpilih (Ctrl + C)"
+              >
+                <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Copy</span>
+              </button>
+            )}
+
+            {onPaste && (
+              <button
+                disabled={!canPaste}
+                onClick={onPaste}
+                className={`flex items-center space-x-1 px-2 py-1.5 text-xs rounded-md transition ${
+                  canPaste
+                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 font-semibold border border-emerald-300'
+                    : 'text-gray-400 cursor-not-allowed'
+                }`}
+                title="Tempel item dari papan klip (Ctrl + V)"
+              >
+                <ClipboardPaste className="w-3.5 h-3.5 text-emerald-600" />
+                <span>
+                  Paste
+                  {clipboardCount > 0 && (
+                    <span className="ml-1 px-1 py-0.2 rounded-full bg-emerald-200 text-emerald-800 text-[10px]">
+                      {clipboardCount}
+                    </span>
+                  )}
+                </span>
+              </button>
+            )}
 
             {onMoveSelected && (
               <button

@@ -7,7 +7,10 @@ import {
   Star,
   Palette,
   RotateCcw,
-  CornerDownRight
+  CornerDownRight,
+  Scissors,
+  Copy,
+  ClipboardPaste
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { downloadBlob } from '../../utils/formatters';
@@ -23,6 +26,11 @@ interface ContextMenuProps {
   onToggleFavorite: (id: string) => void;
   onSetColorTag: (id: string, color: string | undefined) => void;
   onMove?: (file: VirtualFile) => void;
+  onCut?: (file: VirtualFile) => void;
+  onCopy?: (file: VirtualFile) => void;
+  onPaste?: () => void;
+  canPaste?: boolean;
+  clipboardCount?: number;
   isRecycleBin?: boolean;
   onRestore?: (file: VirtualFile) => void;
 }
@@ -38,6 +46,11 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onToggleFavorite,
   onSetColorTag,
   onMove,
+  onCut,
+  onCopy,
+  onPaste,
+  canPaste,
+  clipboardCount,
   isRecycleBin,
   onRestore
 }) => {
@@ -98,6 +111,47 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               <span>Unduh Berkas</span>
             </button>
           )}
+
+          {onCut && (
+            <button
+              onClick={() => {
+                onClose();
+                onCut(file);
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-orange-50 hover:text-orange-700 transition text-left"
+            >
+              <Scissors className="w-4 h-4 text-orange-600" />
+              <span>Potong (Cut)</span>
+            </button>
+          )}
+
+          {onCopy && (
+            <button
+              onClick={() => {
+                onClose();
+                onCopy(file);
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-indigo-50 hover:text-indigo-700 transition text-left"
+            >
+              <Copy className="w-4 h-4 text-indigo-600" />
+              <span>Salin (Copy)</span>
+            </button>
+          )}
+
+          {canPaste && onPaste && (
+            <button
+              onClick={() => {
+                onClose();
+                onPaste();
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-emerald-50 text-emerald-700 font-medium transition text-left"
+            >
+              <ClipboardPaste className="w-4 h-4 text-emerald-600" />
+              <span>Tempel (Paste) {clipboardCount && clipboardCount > 0 ? `(${clipboardCount})` : ''}</span>
+            </button>
+          )}
+
+          <div className="h-px bg-gray-100 my-0.5" />
 
           <button
             onClick={() => {

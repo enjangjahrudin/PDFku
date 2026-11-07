@@ -109,3 +109,15 @@ export interface ServerStats {
   typeBreakdown: { category: string; count: number; bytes: number }[];
   serverTime: string;
 }
+
+export interface ClipboardItem {
+  id: string;
+  name: string;
+  isFolder: boolean;
+}
+
+export interface ClipboardState {
+  items: ClipboardItem[];
+  action: 'copy' | 'cut';
+}
+

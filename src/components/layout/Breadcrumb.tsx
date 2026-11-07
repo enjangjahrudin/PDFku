@@ -10,7 +10,10 @@ import {
   HardDrive,
   Menu,
   Edit2,
-  Trash2
+  Trash2,
+  CornerDownRight,
+  Scissors,
+  Copy
 } from 'lucide-react';
 import { FolderNode } from '../../types';
 
@@ -30,6 +33,9 @@ interface BreadcrumbProps {
   onOpenMobileSidebar?: () => void;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (id: string, name: string) => void;
+  onMoveFolder?: (id: string, name: string) => void;
+  onCopyFolder?: (id: string, name: string) => void;
+  onCutFolder?: (id: string, name: string) => void;
 }
 
 export const Breadcrumb: React.FC<BreadcrumbProps> = ({
@@ -47,7 +53,10 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
   activeNav,
   onOpenMobileSidebar,
   onRenameFolder,
-  onDeleteFolder
+  onDeleteFolder,
+  onMoveFolder,
+  onCopyFolder,
+  onCutFolder
 }) => {
   const isSystemFolder = (id: string | null) => {
     if (!id) return true;
@@ -157,9 +166,51 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
         </div>
       </div>
 
-      {/* Action: Ganti Nama & Hapus Folder Aktif (jika bukan folder sistem) */}
+      {/* Action: Pindahkan, Ganti Nama & Hapus Folder Aktif (jika bukan folder sistem) */}
       {currentFolderId && !isSystemFolder(currentFolderId) && (
         <div className="flex items-center space-x-1 shrink-0">
+          {onMoveFolder && (
+            <button
+              onClick={() => {
+                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                onMoveFolder(currentFolderId, currentName);
+              }}
+              className="flex items-center space-x-1 px-2 py-1 text-xs text-blue-700 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100 rounded-md border border-blue-200 transition font-medium"
+              title="Pindahkan folder ini beserta seluruh isinya ke folder lain"
+            >
+              <CornerDownRight className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden md:inline text-[11px]">Pindahkan Folder</span>
+            </button>
+          )}
+
+          {onCutFolder && (
+            <button
+              onClick={() => {
+                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                onCutFolder(currentFolderId, currentName);
+              }}
+              className="flex items-center space-x-1 px-1.5 py-1 text-xs text-gray-700 hover:text-orange-600 hover:bg-orange-50 rounded-md border border-gray-200 transition"
+              title="Potong folder ini (Cut)"
+            >
+              <Scissors className="w-3.5 h-3.5 text-orange-600" />
+              <span className="hidden lg:inline text-[11px]">Cut</span>
+            </button>
+          )}
+
+          {onCopyFolder && (
+            <button
+              onClick={() => {
+                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                onCopyFolder(currentFolderId, currentName);
+              }}
+              className="flex items-center space-x-1 px-1.5 py-1 text-xs text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-md border border-gray-200 transition"
+              title="Salin folder ini (Copy)"
+            >
+              <Copy className="w-3.5 h-3.5 text-indigo-600" />
+              <span className="hidden lg:inline text-[11px]">Copy</span>
+            </button>
+          )}
+
           <button
             onClick={() => {
               const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';

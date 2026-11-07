@@ -12,7 +12,11 @@ import {
   ShieldCheck,
   X,
   MoreVertical,
-  Edit2
+  Edit2,
+  CornerDownRight,
+  Copy,
+  Scissors,
+  ClipboardPaste
 } from 'lucide-react';
 import { FolderNode } from '../../types';
 
@@ -25,6 +29,12 @@ interface SidebarProps {
   onNewFolder: () => void;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (id: string, name: string) => void;
+  onMoveFolder?: (id: string, name: string) => void;
+  onCopyFolder?: (id: string, name: string) => void;
+  onCutFolder?: (id: string, name: string) => void;
+  onPasteToFolder?: (targetFolderId: string) => void;
+  canPaste?: boolean;
+  clipboardCount?: number;
   isMobileOpen?: boolean;
   onMobileClose?: () => void;
 }
@@ -38,6 +48,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewFolder,
   onRenameFolder,
   onDeleteFolder,
+  onMoveFolder,
+  onCopyFolder,
+  onCutFolder,
+  onPasteToFolder,
+  canPaste,
+  clipboardCount,
   isMobileOpen = false,
   onMobileClose
 }) => {
@@ -308,18 +324,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Floating Action Menu untuk Folder (Rename & Hapus) */}
+      {/* Floating Action Menu untuk Folder (Move, Cut, Copy, Paste, Rename & Hapus) */}
       {menuOpenNodeId && menuPos && (
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
-            left: `${Math.min(menuPos.x, window.innerWidth - 180)}px`,
-            top: `${Math.min(menuPos.y, window.innerHeight - 110)}px`,
+            left: `${Math.min(menuPos.x, window.innerWidth - 200)}px`,
+            top: `${Math.min(menuPos.y, window.innerHeight - 200)}px`,
             zIndex: 9999
           }}
-          className="bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-44 animate-in fade-in zoom-in-95 duration-75 text-xs text-gray-700 select-none"
+          className="bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-48 animate-in fade-in zoom-in-95 duration-75 text-xs text-gray-700 select-none"
         >
+          {onMoveFolder && (
+            <button
+              onClick={() => {
+                const node = findNodeInTree(folderTree, menuOpenNodeId);
+                if (node) onMoveFolder(node.id, node.name);
+                setMenuOpenNodeId(null);
+                setMenuPos(null);
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-blue-50 hover:text-blue-600 transition text-left"
+            >
+              <CornerDownRight className="w-3.5 h-3.5 text-blue-600" />
+              <span>Pindahkan Folder...</span>
+            </button>
+          )}
+
+          {onCutFolder && (
+            <button
+              onClick={() => {
+                const node = findNodeInTree(folderTree, menuOpenNodeId);
+                if (node) onCutFolder(node.id, node.name);
+                setMenuOpenNodeId(null);
+                setMenuPos(null);
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-orange-50 hover:text-orange-600 transition text-left"
+            >
+              <Scissors className="w-3.5 h-3.5 text-orange-600" />
+              <span>Potong Folder (Cut)</span>
+            </button>
+          )}
+
+          {onCopyFolder && (
+            <button
+              onClick={() => {
+                const node = findNodeInTree(folderTree, menuOpenNodeId);
+                if (node) onCopyFolder(node.id, node.name);
+                setMenuOpenNodeId(null);
+                setMenuPos(null);
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-indigo-50 hover:text-indigo-600 transition text-left"
+            >
+              <Copy className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Salin Folder (Copy)</span>
+            </button>
+          )}
+
+          {canPaste && onPasteToFolder && (
+            <button
+              onClick={() => {
+                onPasteToFolder(menuOpenNodeId);
+                setMenuOpenNodeId(null);
+                setMenuPos(null);
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-emerald-50 text-emerald-700 transition text-left font-medium"
+            >
+              <ClipboardPaste className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Tempel ke Folder Ini ({clipboardCount})</span>
+            </button>
+          )}
+
+          <div className="h-px bg-gray-100 my-1" />
+
           <button
             onClick={() => {
               const node = findNodeInTree(folderTree, menuOpenNodeId);
