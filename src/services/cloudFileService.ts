@@ -95,8 +95,9 @@ export const cloudFileService = {
     return data.folder;
   },
 
-  async deleteFolder(id: string): Promise<void> {
-    const res = await fetch(`/api/files/folder/${id}`, {
+  async deleteFolder(id: string, name?: string): Promise<void> {
+    const query = name ? `?name=${encodeURIComponent(name)}` : '';
+    const res = await fetch(`/api/files/folder/${encodeURIComponent(id)}${query}`, {
       method: 'DELETE',
       headers: authService.getAuthHeader()
     });

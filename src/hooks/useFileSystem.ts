@@ -522,7 +522,8 @@ export function useFileSystem() {
     // Hapus dari VPS Cloud jika login
     if (authService.getToken()) {
       try {
-        await cloudFileService.deleteFolder(id);
+        const deletedItem = allItems.find(f => f.id === id);
+        await cloudFileService.deleteFolder(id, deletedItem?.name);
       } catch (err) {
         console.warn('Gagal menghapus folder di cloud:', err);
       }

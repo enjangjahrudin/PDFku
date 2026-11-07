@@ -11,22 +11,27 @@ export function authenticateToken(req, res, next) {
     return res.status(401).json({ success: false, message: 'Autentikasi diperlukan. Silakan login.' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(403).json({ success: false, message: 'Sesi login telah kedaluwarsa atau tidak valid.' });
     }
 
-    const user = db.prepare('SELECT id, username, email, name, role, status, storage_quota FROM users WHERE id = ?').get(decoded.id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'Akun pengguna tidak ditemukan.' });
-    }
+    try {
+      const user = await db.prepare('SELECT id, username, email, name, role, status, storage_quota FROM users WHERE id = ?').get(decoded.id);
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'Akun pengguna tidak ditemukan.' });
+      }
 
-    if (user.status === 'suspended') {
-      return res.status(403).json({ success: false, message: 'Akun Anda dinonaktifkan oleh Administrator.' });
-    }
+      if (user.status === 'suspended') {
+        return res.status(403).json({ success: false, message: 'Akun Anda dinonaktifkan oleh Administrator.' });
+      }
 
-    req.user = user;
-    next();
+      req.user = user;
+      next();
+    } catch (dbErr) {
+      console.error('Auth DB error:', dbErr);
+      return res.status(500).json({ success: false, message: 'Kesalahan internal database autentikasi.' });
+    }
   });
 }
 

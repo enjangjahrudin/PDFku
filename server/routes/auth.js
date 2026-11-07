@@ -7,7 +7,7 @@ import { authenticateToken, JWT_SECRET } from '../middleware.js';
 const router = express.Router();
 
 // Register user baru
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   try {
     const { username, email, password, name } = req.body;
 
@@ -23,7 +23,7 @@ router.post('/register', (req, res) => {
     const cleanEmail = email.trim().toLowerCase();
 
     // Periksa apakah username atau email sudah ada
-    const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(cleanUsername, cleanEmail);
+    const existing = await db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(cleanUsername, cleanEmail);
     if (existing) {
       return res.status(400).json({ success: false, message: 'Username atau email sudah terdaftar.' });
     }
@@ -37,11 +37,11 @@ router.post('/register', (req, res) => {
       VALUES (?, ?, ?, ?, 'user', 'active', 524288000, ?, ?)
     `);
 
-    const result = insert.run(cleanUsername, cleanEmail, hash, name.trim(), now, now);
+    const result = await insert.run(cleanUsername, cleanEmail, hash, name.trim(), now, now);
     const userId = result.lastInsertRowid;
 
     // Buat folder bawaan
-    seedDefaultFolders(userId);
+    await seedDefaultFolders(userId);
 
     const token = jwt.sign({ id: userId, email: cleanEmail, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
 
@@ -65,7 +65,7 @@ router.post('/register', (req, res) => {
 });
 
 // Login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { identifier, password } = req.body; // identifier bisa email atau username
 
@@ -74,7 +74,7 @@ router.post('/login', (req, res) => {
     }
 
     const cleanId = identifier.trim().toLowerCase();
-    const user = db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(cleanId, cleanId);
+    const user = await db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(cleanId, cleanId);
 
     if (!user) {
       return res.status(401).json({ success: false, message: 'Akun tidak ditemukan. Silakan periksa kembali.' });
@@ -92,7 +92,7 @@ router.post('/login', (req, res) => {
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
 
     // Hitung storage yang terpakai
-    const storageSum = db.prepare('SELECT COALESCE(SUM(size), 0) as used_bytes FROM files WHERE user_id = ?').get(user.id);
+    const storageSum = await db.prepare('SELECT COALESCE(SUM(size), 0) as used_bytes FROM files WHERE user_id = ?').get(user.id);
 
     return res.json({
       success: true,
@@ -105,7 +105,7 @@ router.post('/login', (req, res) => {
         name: user.name,
         role: user.role,
         storage_quota: user.storage_quota,
-        used_storage: storageSum.used_bytes
+        used_storage: storageSum ? storageSum.used_bytes : 0
       }
     });
   } catch (err) {
@@ -115,15 +115,15 @@ router.post('/login', (req, res) => {
 });
 
 // Profil Saya (Me)
-router.get('/me', authenticateToken, (req, res) => {
+router.get('/me', authenticateToken, async (req, res) => {
   try {
-    const storageSum = db.prepare('SELECT COALESCE(SUM(size), 0) as used_bytes, COUNT(*) as file_count FROM files WHERE user_id = ?').get(req.user.id);
+    const storageSum = await db.prepare('SELECT COALESCE(SUM(size), 0) as used_bytes, COUNT(*) as file_count FROM files WHERE user_id = ?').get(req.user.id);
     return res.json({
       success: true,
       user: {
         ...req.user,
-        used_storage: storageSum.used_bytes,
-        file_count: storageSum.file_count
+        used_storage: storageSum ? storageSum.used_bytes : 0,
+        file_count: storageSum ? storageSum.file_count : 0
       }
     });
   } catch (err) {
@@ -132,15 +132,15 @@ router.get('/me', authenticateToken, (req, res) => {
 });
 
 // Update Password Sendiri
-router.put('/change-password', authenticateToken, (req, res) => {
+router.put('/change-password', authenticateToken, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
     if (!oldPassword || !newPassword || newPassword.length < 6) {
       return res.status(400).json({ success: false, message: 'Password baru minimal 6 karakter.' });
     }
 
-    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
-    if (!bcrypt.compareSync(oldPassword, user.password_hash)) {
+    const user = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+    if (!user || !bcrypt.compareSync(oldPassword, user.password_hash)) {
       return res.status(400).json({ success: false, message: 'Password lama salah.' });
     }
 
@@ -148,7 +148,7 @@ router.put('/change-password', authenticateToken, (req, res) => {
     const hash = bcrypt.hashSync(newPassword, salt);
     const now = new Date().toISOString();
 
-    db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hash, now, req.user.id);
+    await db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hash, now, req.user.id);
 
     return res.json({ success: true, message: 'Password berhasil diubah.' });
   } catch (err) {

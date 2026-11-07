@@ -15,15 +15,20 @@ router.use(authenticateToken);
 router.use(requireAdmin);
 
 // 1. Statistik Keseluruhan Server & Dokumen
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-    const activeUsers = db.prepare("SELECT COUNT(*) as count FROM users WHERE status = 'active'").get().count;
-    const totalFiles = db.prepare('SELECT COUNT(*) as count FROM files').get().count;
-    const totalStorage = db.prepare('SELECT COALESCE(SUM(size), 0) as total_bytes FROM files').get().total_bytes;
+    const totalUsersRow = await db.prepare('SELECT COUNT(*) as count FROM users').get();
+    const activeUsersRow = await db.prepare("SELECT COUNT(*) as count FROM users WHERE status = 'active'").get();
+    const totalFilesRow = await db.prepare('SELECT COUNT(*) as count FROM files').get();
+    const totalStorageRow = await db.prepare('SELECT COALESCE(SUM(size), 0) as total_bytes FROM files').get();
+
+    const totalUsers = totalUsersRow ? totalUsersRow.count : 0;
+    const activeUsers = activeUsersRow ? activeUsersRow.count : 0;
+    const totalFiles = totalFilesRow ? totalFilesRow.count : 0;
+    const totalStorage = totalStorageRow ? totalStorageRow.total_bytes : 0;
 
     // Hitung berdasarkan tipe berkas
-    const typeBreakdown = db.prepare(`
+    const typeBreakdown = await db.prepare(`
       SELECT 
         CASE 
           WHEN type LIKE '%pdf%' THEN 'PDF'
@@ -54,9 +59,9 @@ router.get('/stats', (req, res) => {
 });
 
 // 2. Daftar Semua Pengguna (User Management)
-router.get('/users', (req, res) => {
+router.get('/users', async (req, res) => {
   try {
-    const users = db.prepare(`
+    const users = await db.prepare(`
       SELECT 
         u.id, 
         u.username, 
@@ -83,7 +88,7 @@ router.get('/users', (req, res) => {
 });
 
 // 3. Tambah Pengguna Baru oleh Admin
-router.post('/users', (req, res) => {
+router.post('/users', async (req, res) => {
   try {
     const { username, email, password, name, role, storage_quota } = req.body;
 
@@ -94,7 +99,7 @@ router.post('/users', (req, res) => {
     const cleanUsername = username.trim().toLowerCase();
     const cleanEmail = email.trim().toLowerCase();
 
-    const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(cleanUsername, cleanEmail);
+    const existing = await db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(cleanUsername, cleanEmail);
     if (existing) {
       return res.status(400).json({ success: false, message: 'Username atau email sudah digunakan.' });
     }
@@ -109,10 +114,10 @@ router.post('/users', (req, res) => {
       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
     `);
 
-    const result = insert.run(cleanUsername, cleanEmail, hash, name.trim(), role || 'user', quota, now, now);
+    const result = await insert.run(cleanUsername, cleanEmail, hash, name.trim(), role || 'user', quota, now, now);
     const newUserId = result.lastInsertRowid;
 
-    seedDefaultFolders(newUserId);
+    await seedDefaultFolders(newUserId);
 
     return res.status(201).json({
       success: true,
@@ -125,12 +130,12 @@ router.post('/users', (req, res) => {
 });
 
 // 4. Update Pengguna (Ubah Role, Status, Kuota, atau Reset Password)
-router.put('/users/:id', (req, res) => {
+router.put('/users/:id', async (req, res) => {
   try {
     const targetUserId = Number(req.params.id);
     const { role, status, storage_quota, name, newPassword } = req.body;
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan.' });
     }
@@ -171,7 +176,7 @@ router.put('/users/:id', (req, res) => {
       params.push(new Date().toISOString());
       params.push(targetUserId);
 
-      db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+      await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     }
 
     return res.json({ success: true, message: 'Data pengguna berhasil diperbarui.' });
@@ -181,7 +186,7 @@ router.put('/users/:id', (req, res) => {
 });
 
 // 5. Hapus Pengguna & Semua Berkasnya dari Disk
-router.delete('/users/:id', (req, res) => {
+router.delete('/users/:id', async (req, res) => {
   try {
     const targetUserId = Number(req.params.id);
 
@@ -189,7 +194,7 @@ router.delete('/users/:id', (req, res) => {
       return res.status(400).json({ success: false, message: 'Anda tidak dapat menghapus akun Anda sendiri saat sedang login.' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan.' });
     }
@@ -205,9 +210,9 @@ router.delete('/users/:id', (req, res) => {
     }
 
     // Cascade delete file & folder & user
-    db.prepare('DELETE FROM files WHERE user_id = ?').run(targetUserId);
-    db.prepare('DELETE FROM folders WHERE user_id = ?').run(targetUserId);
-    db.prepare('DELETE FROM users WHERE id = ?').run(targetUserId);
+    await db.prepare('DELETE FROM files WHERE user_id = ?').run(targetUserId);
+    await db.prepare('DELETE FROM folders WHERE user_id = ?').run(targetUserId);
+    await db.prepare('DELETE FROM users WHERE id = ?').run(targetUserId);
 
     return res.json({ success: true, message: 'Pengguna dan seluruh berkasnya berhasil dihapus permanen.' });
   } catch (err) {

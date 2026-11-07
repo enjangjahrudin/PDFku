@@ -45,16 +45,16 @@ function resolveUserFolderId(folderId, userId) {
 }
 
 // 1. Ambil daftar folder dan file milik user aktif
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { folderId, search, view } = req.query;
     const userId = req.user.id;
 
     // Ambil semua folder user (buat default jika baru pertama kali)
-    let folders = db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC').all(userId);
+    let folders = await db.all('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC', [userId]);
     if (folders.length === 0) {
-      seedDefaultFolders(userId);
-      folders = db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC').all(userId);
+      await seedDefaultFolders(userId);
+      folders = await db.all('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC', [userId]);
     }
 
     let filesQuery = 'SELECT * FROM files WHERE user_id = ?';
@@ -72,25 +72,30 @@ router.get('/', (req, res) => {
         const term = `%${search.trim()}%`;
         params.push(term, term);
       } else if (folderId) {
-        filesQuery += ' AND folder_id = ?';
-        params.push(resolveUserFolderId(folderId, userId));
+        const resolvedFolderId = resolveUserFolderId(folderId, userId);
+        const altFolderId = resolvedFolderId.includes('-') 
+          ? resolvedFolderId.replace(/-/g, '_') 
+          : resolvedFolderId.replace(/_/g, '-');
+        
+        filesQuery += ' AND (folder_id = ? OR folder_id = ?)';
+        params.push(resolvedFolderId, altFolderId);
       }
     }
 
     filesQuery += ' ORDER BY created_at DESC';
-    const files = db.prepare(filesQuery).all(...params);
+    const files = await db.all(filesQuery, params);
 
     // Hitung total storage terpakai
-    const storageStats = db.prepare('SELECT COALESCE(SUM(size), 0) as used_bytes, COUNT(*) as file_count FROM files WHERE user_id = ?').get(userId);
+    const storageStats = await db.get('SELECT COALESCE(SUM(size), 0) as used_bytes, COUNT(*) as file_count FROM files WHERE user_id = ?', [userId]);
 
     return res.json({
       success: true,
       folders,
       files,
       storage: {
-        used: storageStats.used_bytes,
+        used: storageStats ? storageStats.used_bytes : 0,
         quota: req.user.storage_quota,
-        fileCount: storageStats.file_count
+        fileCount: storageStats ? storageStats.file_count : 0
       }
     });
   } catch (err) {
@@ -100,7 +105,7 @@ router.get('/', (req, res) => {
 });
 
 // 2. Upload berkas (Scan Dokumen / Konversi / File Biasa)
-router.post('/upload', upload.single('file'), (req, res) => {
+router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Tidak ada berkas yang diunggah.' });
@@ -110,8 +115,9 @@ router.post('/upload', upload.single('file'), (req, res) => {
     const fileSize = req.file.size;
 
     // Cek kuota penyimpanan pengguna
-    const currentUsage = db.prepare('SELECT COALESCE(SUM(size), 0) as used_bytes FROM files WHERE user_id = ?').get(userId);
-    if (currentUsage.used_bytes + fileSize > req.user.storage_quota) {
+    const currentUsage = await db.get('SELECT COALESCE(SUM(size), 0) as used_bytes FROM files WHERE user_id = ?', [userId]);
+    const usedBytes = currentUsage ? currentUsage.used_bytes : 0;
+    if (usedBytes + fileSize > req.user.storage_quota) {
       // Hapus file yang terlanjur terupload ke disk
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
@@ -131,14 +137,12 @@ router.post('/upload', upload.single('file'), (req, res) => {
     // Simpan relatif disk path
     const relativeDiskPath = path.relative(path.resolve(__dirname, '../../'), req.file.path).replace(/\\/g, '/');
 
-    const insert = db.prepare(`
-      INSERT INTO files (id, user_id, name, type, size, disk_path, thumbnail, folder_id, ocr_text, is_starred, is_trash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-    `);
-
     const targetFolderId = resolveUserFolderId(folderId, userId);
 
-    insert.run(
+    await db.run(`
+      INSERT INTO files (id, user_id, name, type, size, disk_path, thumbnail, folder_id, ocr_text, is_starred, is_trash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+    `, [
       fileId,
       userId,
       fileName,
@@ -150,9 +154,9 @@ router.post('/upload', upload.single('file'), (req, res) => {
       ocrText || null,
       now,
       now
-    );
+    ]);
 
-    const savedFile = db.prepare('SELECT * FROM files WHERE id = ?').get(fileId);
+    const savedFile = await db.get('SELECT * FROM files WHERE id = ?', [fileId]);
 
     return res.status(201).json({
       success: true,
@@ -165,8 +169,8 @@ router.post('/upload', upload.single('file'), (req, res) => {
   }
 });
 
-// 3. Buat Folder Baru
-router.post('/folder', (req, res) => {
+// 3. Buat Folder Baru (Cegah Duplikasi dengan Mencari Folder Eksis Terlebih Dahulu)
+router.post('/folder', async (req, res) => {
   try {
     const { name, parentId, color } = req.body;
     if (!name || name.trim() === '') {
@@ -175,12 +179,27 @@ router.post('/folder', (req, res) => {
 
     const userId = req.user.id;
     const targetParentId = resolveUserFolderId(parentId, userId);
+    const cleanName = name.trim();
 
-    // Cek apakah folder dengan nama dan parent yang sama sudah ada untuk user ini
-    const existing = db.prepare(`
-      SELECT * FROM folders 
-      WHERE user_id = ? AND name = ? AND (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))
-    `).get(userId, name.trim(), targetParentId || null, targetParentId || null);
+    // Cek apakah folder dengan nama yang sama sudah ada untuk user ini di parent ini
+    let existing = null;
+    if (targetParentId) {
+      const altParentId = targetParentId.includes('-') 
+        ? targetParentId.replace(/-/g, '_') 
+        : targetParentId.replace(/_/g, '-');
+
+      existing = await db.get(`
+        SELECT * FROM folders 
+        WHERE user_id = ? AND LOWER(name) = LOWER(?) AND (parent_id = ? OR parent_id = ?)
+        LIMIT 1
+      `, [userId, cleanName, targetParentId, altParentId]);
+    } else {
+      existing = await db.get(`
+        SELECT * FROM folders 
+        WHERE user_id = ? AND LOWER(name) = LOWER(?) AND (parent_id IS NULL OR parent_id = '')
+        LIMIT 1
+      `, [userId, cleanName]);
+    }
 
     if (existing) {
       return res.status(200).json({ success: true, folder: existing });
@@ -189,21 +208,21 @@ router.post('/folder', (req, res) => {
     const folderId = 'folder_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
 
-    const insert = db.prepare(`
+    await db.run(`
       INSERT INTO folders (id, user_id, name, parent_id, color, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    insert.run(folderId, userId, name.trim(), targetParentId || null, color || '#3b82f6', now);
+    `, [folderId, userId, cleanName, targetParentId || null, color || '#3b82f6', now]);
 
-    const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId);
+    const folder = await db.get('SELECT * FROM folders WHERE id = ?', [folderId]);
     return res.status(201).json({ success: true, folder });
   } catch (err) {
+    console.error('Error buat folder:', err);
     return res.status(500).json({ success: false, message: 'Gagal membuat folder.' });
   }
 });
 
 // 3b. Ganti Nama Folder
-router.put('/folder/:id', (req, res) => {
+router.put('/folder/:id', async (req, res) => {
   try {
     const folderId = req.params.id;
     const userId = req.user.id;
@@ -217,11 +236,17 @@ router.put('/folder/:id', (req, res) => {
       return res.status(400).json({ success: false, message: 'Folder sistem bawaan tidak dapat diubah namanya.' });
     }
 
-    const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(folderId, userId);
+    let folder = await db.get('SELECT * FROM folders WHERE id = ? AND user_id = ?', [folderId, userId]);
+    if (!folder) {
+      const altId = folderId.includes('-') ? folderId.replace(/-/g, '_') : folderId.replace(/_/g, '-');
+      folder = await db.get('SELECT * FROM folders WHERE id = ? AND user_id = ?', [altId, userId]);
+    }
+
     if (!folder) {
       return res.status(404).json({ success: false, message: 'Folder tidak ditemukan.' });
     }
 
+    const actualId = folder.id;
     const updates = [];
     const params = [];
 
@@ -239,11 +264,11 @@ router.put('/folder/:id', (req, res) => {
     }
 
     if (updates.length > 0) {
-      params.push(folderId, userId);
-      db.prepare(`UPDATE folders SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
+      params.push(actualId, userId);
+      await db.run(`UPDATE folders SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
     }
 
-    const updated = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId);
+    const updated = await db.get('SELECT * FROM folders WHERE id = ?', [actualId]);
     return res.json({ success: true, folder: updated });
   } catch (err) {
     console.error('Gagal memperbarui folder:', err);
@@ -251,10 +276,11 @@ router.put('/folder/:id', (req, res) => {
   }
 });
 
-// 3c. Hapus Folder Beserta Isinya
-router.delete('/folder/:id', (req, res) => {
+// 3c. Hapus Folder Beserta Isinya (Mendukung ID dan Pembersihan Duplikat)
+router.delete('/folder/:id', async (req, res) => {
   try {
     const folderId = req.params.id;
+    const folderName = req.query.name;
     const userId = req.user.id;
 
     const systemRoots = [
@@ -265,26 +291,46 @@ router.delete('/folder/:id', (req, res) => {
       return res.status(400).json({ success: false, message: 'Folder sistem bawaan tidak dapat dihapus.' });
     }
 
-    const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(folderId, userId);
+    // Cari folder berdasarkan ID utama, ID alternatif (- vs _), atau nama jika ada
+    let folder = await db.get('SELECT * FROM folders WHERE id = ? AND user_id = ?', [folderId, userId]);
     if (!folder) {
-      return res.status(404).json({ success: false, message: 'Folder tidak ditemukan.' });
+      const altId = folderId.includes('-') ? folderId.replace(/-/g, '_') : folderId.replace(/_/g, '-');
+      folder = await db.get('SELECT * FROM folders WHERE id = ? AND user_id = ?', [altId, userId]);
+    }
+    if (!folder && folderName) {
+      folder = await db.get('SELECT * FROM folders WHERE LOWER(name) = LOWER(?) AND user_id = ? LIMIT 1', [folderName.trim(), userId]);
     }
 
-    // Kumpulkan semua subfolder secara rekursif
-    const folderIdsToDelete = [folderId];
-    let queue = [folderId];
+    if (!folder) {
+      // Jika sudah tidak ada di server, anggap sudah terhapus agar client sinkron
+      return res.json({ success: true, message: 'Folder sudah tidak ada di server.' });
+    }
+
+    // Kumpulkan semua ID folder yang sama atau subfolder secara rekursif
+    // Termasuk duplikat folder dengan nama dan parent yang sama
+    const targetParent = folder.parent_id || null;
+    const matchingFolders = await db.all(
+      'SELECT id FROM folders WHERE user_id = ? AND (id = ? OR (LOWER(name) = LOWER(?) AND (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))))',
+      [userId, folder.id, folder.name, targetParent, targetParent]
+    );
+
+    const folderIdsToDelete = Array.from(new Set([folder.id, ...matchingFolders.map(f => f.id)]));
+    let queue = [...folderIdsToDelete];
+
     while (queue.length > 0) {
       const current = queue.shift();
-      const subfolders = db.prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?').all(current, userId);
+      const subfolders = await db.all('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?', [current, userId]);
       for (const sub of subfolders) {
-        folderIdsToDelete.push(sub.id);
-        queue.push(sub.id);
+        if (!folderIdsToDelete.includes(sub.id)) {
+          folderIdsToDelete.push(sub.id);
+          queue.push(sub.id);
+        }
       }
     }
 
     // Cari dan hapus semua file fisik di disk yang berada di dalam folder-folder ini
     const placeholders = folderIdsToDelete.map(() => '?').join(',');
-    const filesToDelete = db.prepare(`SELECT * FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`).all(...folderIdsToDelete, userId);
+    const filesToDelete = await db.all(`SELECT * FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`, [...folderIdsToDelete, userId]);
 
     for (const f of filesToDelete) {
       if (f.disk_path) {
@@ -296,10 +342,10 @@ router.delete('/folder/:id', (req, res) => {
     }
 
     // Hapus data file dari database
-    db.prepare(`DELETE FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`).run(...folderIdsToDelete, userId);
+    await db.run(`DELETE FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`, [...folderIdsToDelete, userId]);
 
     // Hapus folder-folder dari database
-    db.prepare(`DELETE FROM folders WHERE id IN (${placeholders}) AND user_id = ?`).run(...folderIdsToDelete, userId);
+    await db.run(`DELETE FROM folders WHERE id IN (${placeholders}) AND user_id = ?`, [...folderIdsToDelete, userId]);
 
     return res.json({ success: true, message: 'Folder dan seluruh isinya berhasil dihapus.' });
   } catch (err) {
@@ -309,17 +355,23 @@ router.delete('/folder/:id', (req, res) => {
 });
 
 // 4. Update File (Rename, Move Folder, Star, Trash, Restore)
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const fileId = req.params.id;
     const userId = req.user.id;
     const { name, folderId, isStarred, isTrash } = req.body;
 
-    const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, userId);
+    let file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [fileId, userId]);
+    if (!file) {
+      const altId = fileId.includes('-') ? fileId.replace(/-/g, '_') : fileId.replace(/_/g, '-');
+      file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [altId, userId]);
+    }
+
     if (!file) {
       return res.status(404).json({ success: false, message: 'Berkas tidak ditemukan.' });
     }
 
+    const actualId = file.id;
     const updates = [];
     const params = [];
 
@@ -343,28 +395,36 @@ router.put('/:id', (req, res) => {
     if (updates.length > 0) {
       updates.push('updated_at = ?');
       params.push(new Date().toISOString());
-      params.push(fileId, userId);
+      params.push(actualId, userId);
 
-      db.prepare(`UPDATE files SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
+      await db.run(`UPDATE files SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
     }
 
-    const updatedFile = db.prepare('SELECT * FROM files WHERE id = ?').get(fileId);
+    const updatedFile = await db.get('SELECT * FROM files WHERE id = ?', [actualId]);
     return res.json({ success: true, file: updatedFile });
   } catch (err) {
+    console.error('Error update file:', err);
     return res.status(500).json({ success: false, message: 'Gagal memperbarui berkas.' });
   }
 });
 
 // 5. Hapus File Permanen
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const fileId = req.params.id;
     const userId = req.user.id;
 
-    const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, userId);
+    let file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [fileId, userId]);
+    if (!file) {
+      const altId = fileId.includes('-') ? fileId.replace(/-/g, '_') : fileId.replace(/_/g, '-');
+      file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [altId, userId]);
+    }
+
     if (!file) {
       return res.status(404).json({ success: false, message: 'Berkas tidak ditemukan.' });
     }
+
+    const actualId = file.id;
 
     // Hapus fisik file dari disk VPS
     const fullDiskPath = path.resolve(__dirname, '../../', file.disk_path);
@@ -376,18 +436,19 @@ router.delete('/:id', (req, res) => {
       }
     }
 
-    db.prepare('DELETE FROM files WHERE id = ? AND user_id = ?').run(fileId, userId);
+    await db.run('DELETE FROM files WHERE id = ? AND user_id = ?', [actualId, userId]);
     return res.json({ success: true, message: 'Berkas berhasil dihapus permanen.' });
   } catch (err) {
+    console.error('Error hapus file:', err);
     return res.status(500).json({ success: false, message: 'Gagal menghapus berkas.' });
   }
 });
 
 // 6. Kosongkan Tempat Sampah (Empty Trash)
-router.delete('/trash/empty', (req, res) => {
+router.delete('/trash/empty', async (req, res) => {
   try {
     const userId = req.user.id;
-    const trashedFiles = db.prepare('SELECT * FROM files WHERE user_id = ? AND is_trash = 1').all(userId);
+    const trashedFiles = await db.all('SELECT * FROM files WHERE user_id = ? AND is_trash = 1', [userId]);
 
     for (const f of trashedFiles) {
       const fullDiskPath = path.resolve(__dirname, '../../', f.disk_path);
@@ -396,20 +457,26 @@ router.delete('/trash/empty', (req, res) => {
       }
     }
 
-    db.prepare('DELETE FROM files WHERE user_id = ? AND is_trash = 1').run(userId);
+    await db.run('DELETE FROM files WHERE user_id = ? AND is_trash = 1', [userId]);
     return res.json({ success: true, message: 'Tempat sampah berhasil dikosongkan.' });
   } catch (err) {
+    console.error('Error empty trash:', err);
     return res.status(500).json({ success: false, message: 'Gagal mengosongkan tempat sampah.' });
   }
 });
 
 // 7. Download / Stream Berkas
-router.get('/download/:id', (req, res) => {
+router.get('/download/:id', async (req, res) => {
   try {
     const fileId = req.params.id;
     const userId = req.user.id;
 
-    const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, userId);
+    let file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [fileId, userId]);
+    if (!file) {
+      const altId = fileId.includes('-') ? fileId.replace(/-/g, '_') : fileId.replace(/_/g, '-');
+      file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [altId, userId]);
+    }
+
     if (!file) {
       return res.status(404).json({ success: false, message: 'Berkas tidak ditemukan.' });
     }
@@ -421,17 +488,23 @@ router.get('/download/:id', (req, res) => {
 
     res.download(fullDiskPath, file.name);
   } catch (err) {
+    console.error('Error download:', err);
     return res.status(500).json({ success: false, message: 'Gagal mengunduh berkas.' });
   }
 });
 
 // 8. Stream Pratinjau Berkas (Inline)
-router.get('/preview/:id', (req, res) => {
+router.get('/preview/:id', async (req, res) => {
   try {
     const fileId = req.params.id;
     const userId = req.user.id;
 
-    const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, userId);
+    let file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [fileId, userId]);
+    if (!file) {
+      const altId = fileId.includes('-') ? fileId.replace(/-/g, '_') : fileId.replace(/_/g, '-');
+      file = await db.get('SELECT * FROM files WHERE id = ? AND user_id = ?', [altId, userId]);
+    }
+
     if (!file) {
       return res.status(404).json({ success: false, message: 'Berkas tidak ditemukan.' });
     }
@@ -446,6 +519,7 @@ router.get('/preview/:id', (req, res) => {
     const stream = fs.createReadStream(fullDiskPath);
     stream.pipe(res);
   } catch (err) {
+    console.error('Error preview:', err);
     return res.status(500).json({ success: false, message: 'Gagal memuat pratinjau berkas.' });
   }
 });
