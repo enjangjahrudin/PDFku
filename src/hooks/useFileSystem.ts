@@ -273,8 +273,17 @@ export function useFileSystem() {
             createdAt: new Date(sf.created_at).getTime(),
             updatedAt: new Date(sf.updated_at).getTime()
           });
-        } else if (existing.parentId !== resolvedFolderId) {
-          await db.files.update(sf.id, { parentId: resolvedFolderId });
+        } else {
+          const updates: Partial<VirtualFile> = {};
+          if (existing.parentId !== resolvedFolderId) updates.parentId = resolvedFolderId;
+          if (existing.name !== sf.name) updates.name = sf.name;
+          const isFav = sf.is_starred === 1;
+          const isDel = sf.is_trash === 1;
+          if (existing.isFavorite !== isFav) updates.isFavorite = isFav;
+          if (existing.isDeleted !== isDel) updates.isDeleted = isDel;
+          if (Object.keys(updates).length > 0) {
+            await db.files.update(sf.id, updates);
+          }
         }
       }
 
