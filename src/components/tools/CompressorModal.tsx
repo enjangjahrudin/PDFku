@@ -27,6 +27,7 @@ export const CompressorModal: React.FC<CompressorModalProps> = ({
   const [targetSizePreset, setTargetSizePreset] = useState<number>(300 * 1024); // 300 KB
   const [customKb, setCustomKb] = useState<number>(300);
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [progressMsg, setProgressMsg] = useState<string>('');
   const [compressedBlob, setCompressedBlob] = useState<Blob | null>(null);
 
@@ -35,6 +36,7 @@ export const CompressorModal: React.FC<CompressorModalProps> = ({
       setSelectedFile(null);
       setCompressedBlob(null);
       setIsCompressing(false);
+      setIsSaving(false);
       setProgressMsg('');
     }
   }, [isOpen]);
@@ -66,21 +68,27 @@ export const CompressorModal: React.FC<CompressorModalProps> = ({
   };
 
   const handleSaveToExplorer = async () => {
-    if (!compressedBlob || !selectedFile) return;
+    if (!compressedBlob || !selectedFile || isSaving) return;
     const baseName = selectedFile.name.replace(/\.pdf$/i, '');
     const newName = `${baseName}_Compressed.pdf`;
 
-    await onSaveToExplorer({
-      name: newName,
-      parentId: 'folder-converted',
-      type: 'pdf',
-      isFolder: false,
-      size: compressedBlob.size,
-      blob: compressedBlob,
-      colorTag: '#10b981'
-    });
-    alert('Dokumen terkompresi berhasil disimpan ke folder Hasil Konversi!');
-    onClose();
+    setIsSaving(true);
+    try {
+      await onSaveToExplorer({
+        name: newName,
+        parentId: 'folder-converted',
+        type: 'pdf',
+        isFolder: false,
+        size: compressedBlob.size,
+        blob: compressedBlob,
+        colorTag: '#10b981'
+      });
+      onClose();
+    } catch (e: any) {
+      alert('Gagal menyimpan berkas: ' + (e?.message || 'Terjadi kesalahan'));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDownloadDirect = () => {
@@ -205,11 +213,12 @@ export const CompressorModal: React.FC<CompressorModalProps> = ({
 
                   <div className="flex space-x-2 pt-1">
                     <button
+                      disabled={isSaving}
                       onClick={handleSaveToExplorer}
-                      className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow"
+                      className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow cursor-pointer disabled:cursor-not-allowed"
                     >
-                      <FolderInput className="w-4 h-4" />
-                      <span>Simpan ke Explorer</span>
+                      {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
+                      <span>{isSaving ? 'Menyimpan...' : 'Simpan ke Explorer'}</span>
                     </button>
                     <button
                       onClick={handleDownloadDirect}

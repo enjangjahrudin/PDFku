@@ -12,7 +12,8 @@ import {
   Trash2,
   MoveUp,
   MoveDown,
-  Plus
+  Plus,
+  CheckCircle2
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -53,6 +54,16 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
   const [outputPdfName, setOutputPdfName] = useState<string>('Dokumen_Konversi.pdf');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
+  // State indikator proses simpan ke File Explorer
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveProgress, setSaveProgress] = useState<{
+    current: number;
+    total: number;
+    message: string;
+    isDone?: boolean;
+    folderName?: string;
+  }>({ current: 0, total: 0, message: '', isDone: false });
+
   // Reset form saat modal dibuka kembali
   const resetForm = () => {
     setPdfFile(null);
@@ -62,6 +73,8 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
     setJpgImages([]);
     setOutputPdfName('Dokumen_Konversi.pdf');
     setIsGeneratingPdf(false);
+    setIsSaving(false);
+    setSaveProgress({ current: 0, total: 0, message: '', isDone: false });
   };
 
   useEffect(() => {
@@ -115,39 +128,79 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
   };
 
   const handleSaveJpgToExplorer = async () => {
-    if (pdfResults.length === 0 || !pdfFile) return;
+    if (pdfResults.length === 0 || !pdfFile || isSaving) return;
     const baseName = pdfFile.name.replace(/\.pdf$/i, '');
 
-    // Buat 1 folder baru otomatis khusus untuk hasil konversi PDF ini
-    let targetFolderId = 'folder-converted';
-    if (onCreateFolder) {
-      const newFolder = await onCreateFolder(baseName, 'folder-converted', '#10b981');
-      targetFolderId = newFolder.id;
-    }
+    setIsSaving(true);
+    setSaveProgress({
+      current: 0,
+      total: pdfResults.length,
+      message: `Menyiapkan folder "${baseName}"...`,
+      isDone: false,
+      folderName: baseName
+    });
 
-    // Simpan semua file JPG ke dalam folder baru tersebut
-    for (const item of pdfResults) {
-      await onSaveToExplorer({
-        name: `${baseName}_Hal_${item.pageNumber}.jpg`,
-        parentId: targetFolderId,
-        type: 'jpg',
-        isFolder: false,
-        size: item.blob.size,
-        blob: item.blob,
-        thumbnail: item.dataUrl,
-        pageCount: 1,
-        colorTag: '#10b981'
+    try {
+      // 1. Buat 1 folder baru otomatis khusus untuk hasil konversi PDF ini
+      let targetFolderId = 'folder-converted';
+      if (onCreateFolder) {
+        setSaveProgress({
+          current: 0,
+          total: pdfResults.length,
+          message: `Membuat folder "${baseName}" di Hasil Konversi...`,
+          isDone: false,
+          folderName: baseName
+        });
+        const newFolder = await onCreateFolder(baseName, 'folder-converted', '#10b981');
+        targetFolderId = newFolder.id;
+      }
+
+      // 2. Simpan setiap file JPG ke dalam folder baru tersebut secara berurutan
+      for (let i = 0; i < pdfResults.length; i++) {
+        const item = pdfResults[i];
+        setSaveProgress({
+          current: i + 1,
+          total: pdfResults.length,
+          message: `Menyimpan & mengunggah Halaman ${item.pageNumber} dari ${pdfResults.length}...`,
+          isDone: false,
+          folderName: baseName
+        });
+
+        await onSaveToExplorer({
+          name: `${baseName}_Hal_${item.pageNumber}.jpg`,
+          parentId: targetFolderId,
+          type: 'jpg',
+          isFolder: false,
+          size: item.blob.size,
+          blob: item.blob,
+          thumbnail: item.dataUrl,
+          pageCount: 1,
+          colorTag: '#10b981'
+        });
+      }
+
+      // Arahkan tampilan explorer langsung masuk ke folder yang baru dibuat
+      if (onNavigateToFolder) {
+        onNavigateToFolder(targetFolderId);
+      }
+
+      // 3. Tampilkan status selesai
+      setSaveProgress({
+        current: pdfResults.length,
+        total: pdfResults.length,
+        message: `Selesai! Seluruh berkas berhasil disimpan.`,
+        isDone: true,
+        folderName: baseName
       });
-    }
 
-    // Arahkan tampilan explorer langsung masuk ke folder yang baru dibuat
-    if (onNavigateToFolder) {
-      onNavigateToFolder(targetFolderId);
+      setTimeout(() => {
+        resetForm();
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      alert('Gagal menyimpan ke File Explorer: ' + (err?.message || 'Terjadi kesalahan'));
+      setIsSaving(false);
     }
-
-    alert(`Berhasil membuat folder baru "${baseName}" dan menyimpan ${pdfResults.length} berkas JPG di dalamnya!`);
-    resetForm();
-    onClose();
   };
 
   // Handler JPG to PDF
@@ -178,7 +231,7 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
   };
 
   const handleStartJpgToPdf = async (saveToFolder: boolean = true) => {
-    if (jpgImages.length === 0) return;
+    if (jpgImages.length === 0 || isSaving) return;
     setIsGeneratingPdf(true);
     try {
       const blobs = jpgImages.map((item) => item.file);
@@ -186,6 +239,15 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
       const finalName = outputPdfName.endsWith('.pdf') ? outputPdfName : outputPdfName + '.pdf';
 
       if (saveToFolder) {
+        setIsSaving(true);
+        setSaveProgress({
+          current: 1,
+          total: 1,
+          message: `Menyimpan berkas "${finalName}" ke folder Hasil Konversi...`,
+          isDone: false,
+          folderName: 'Hasil Konversi'
+        });
+
         await onSaveToExplorer({
           name: finalName,
           parentId: 'folder-converted',
@@ -197,14 +259,29 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
           pageCount: jpgImages.length,
           colorTag: '#10b981'
         });
-        alert('Berhasil membuat PDF dan menyimpannya di folder Hasil Konversi!');
-        resetForm();
-        onClose();
+
+        setSaveProgress({
+          current: 1,
+          total: 1,
+          message: `Selesai! Berkas PDF berhasil disimpan.`,
+          isDone: true,
+          folderName: 'Hasil Konversi'
+        });
+
+        if (onNavigateToFolder) {
+          onNavigateToFolder('folder-converted');
+        }
+
+        setTimeout(() => {
+          resetForm();
+          onClose();
+        }, 1200);
       } else {
         saveAs(pdfBlob, finalName);
       }
     } catch (err) {
       alert('Gagal membuat PDF: ' + (err as Error).message);
+      setIsSaving(false);
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -212,7 +289,63 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 select-none">
-      <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 relative">
+        {/* Loading & Progress Overlay Saat Menyimpan ke File Explorer */}
+        {isSaving && (
+          <div className="absolute inset-0 bg-white/95 backdrop-blur-xs z-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-150 select-none">
+            {!saveProgress.isDone ? (
+              <div className="flex flex-col items-center max-w-sm">
+                <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center border-2 border-emerald-100 shadow-inner mb-4">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+                </div>
+
+                <h4 className="text-base font-bold text-gray-800 mb-1">
+                  Menyimpan ke File Explorer
+                </h4>
+                <p className="text-xs text-gray-600 mb-4 font-medium px-2">
+                  {saveProgress.message}
+                </p>
+
+                {/* Progress Bar & Percentage */}
+                <div className="w-72 bg-gray-100 rounded-full h-3 overflow-hidden border border-gray-200 shadow-inner mb-2">
+                  <div
+                    className="bg-emerald-600 h-3 rounded-full transition-all duration-300 ease-out"
+                    style={{
+                      width: `${Math.round(((saveProgress.current) / (saveProgress.total || 1)) * 100)}%`
+                    }}
+                  />
+                </div>
+
+                <div className="flex justify-between w-72 text-xs text-gray-500 font-mono mb-4">
+                  <span>Halaman {saveProgress.current} dari {saveProgress.total}</span>
+                  <span className="font-semibold text-emerald-700">
+                    {Math.round(((saveProgress.current) / (saveProgress.total || 1)) * 100)}%
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-gray-400">
+                  Menyimpan ke IndexedDB dan menyinkronkan ke Cloud VPS...
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center animate-in zoom-in-95 duration-200">
+                <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mb-3 shadow-md">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+                <h4 className="text-base font-bold text-gray-800 mb-1">
+                  Berhasil Disimpan!
+                </h4>
+                <p className="text-xs text-gray-600 max-w-sm mb-2">
+                  Folder <strong>"{saveProgress.folderName}"</strong> beserta <strong>{saveProgress.total} berkas</strong> telah tersimpan di File Explorer.
+                </p>
+                <span className="text-xs text-emerald-600 font-medium animate-pulse">
+                  Membuka folder di File Explorer...
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Header */}
         <div className="h-12 border-b border-gray-200 px-4 flex items-center justify-between bg-[#fafafa]">
           <div className="flex items-center space-x-2">
@@ -354,10 +487,20 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
                           </button>
                           <button
                             onClick={handleSaveJpgToExplorer}
-                            className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-medium transition shadow"
+                            disabled={isSaving}
+                            className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-md text-xs font-medium transition shadow cursor-pointer disabled:cursor-not-allowed"
                           >
-                            <FolderInput className="w-3.5 h-3.5" />
-                            <span>Simpan ke File Explorer</span>
+                            {isSaving ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Menyimpan ({saveProgress.current}/{saveProgress.total})...</span>
+                              </>
+                            ) : (
+                              <>
+                                <FolderInput className="w-3.5 h-3.5" />
+                                <span>Simpan ke File Explorer</span>
+                              </>
+                            )}
                           </button>
                         </div>
                       </div>
@@ -487,18 +630,18 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
 
                     <div className="flex space-x-2">
                       <button
-                        disabled={isGeneratingPdf}
+                        disabled={isGeneratingPdf || isSaving}
                         onClick={() => handleStartJpgToPdf(true)}
-                        className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-2 transition shadow"
+                        className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-2 transition shadow cursor-pointer disabled:cursor-not-allowed"
                       >
-                        {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
+                        {isGeneratingPdf || isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
                         <span>Simpan ke Explorer</span>
                       </button>
 
                       <button
-                        disabled={isGeneratingPdf}
+                        disabled={isGeneratingPdf || isSaving}
                         onClick={() => handleStartJpgToPdf(false)}
-                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition"
+                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition"
                       >
                         <Download className="w-4 h-4" />
                         <span>Unduh Langsung</span>
