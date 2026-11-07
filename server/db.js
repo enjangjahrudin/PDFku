@@ -97,6 +97,33 @@ export function initDb() {
       UPDATE files SET folder_id = 'folder-doc-' || user_id WHERE folder_id = 'folder-my-docs';
       UPDATE files SET folder_id = 'folder-arc-' || user_id WHERE folder_id = 'folder-archive';
     `);
+
+    // Pembersihan & penggabungan folder duplikat (misal beberapa folder "DIVA NURLATIFAH")
+    const duplicateGroups = db.prepare(`
+      SELECT user_id, name, parent_id, COUNT(*) as count 
+      FROM folders 
+      GROUP BY user_id, name, parent_id 
+      HAVING count > 1
+    `).all();
+
+    for (const group of duplicateGroups) {
+      const allDuplicates = db.prepare(`
+        SELECT id FROM folders 
+        WHERE user_id = ? AND name = ? AND (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))
+        ORDER BY created_at ASC
+      `).all(group.user_id, group.name, group.parent_id, group.parent_id);
+
+      if (allDuplicates.length > 1) {
+        const survivorId = allDuplicates[0].id;
+        const duplicateIds = allDuplicates.slice(1).map(d => d.id);
+
+        for (const dupId of duplicateIds) {
+          db.prepare('UPDATE files SET folder_id = ? WHERE folder_id = ?').run(survivorId, dupId);
+          db.prepare('UPDATE folders SET parent_id = ? WHERE parent_id = ?').run(survivorId, dupId);
+          db.prepare('DELETE FROM folders WHERE id = ?').run(dupId);
+        }
+      }
+    }
   } catch (err) {
     console.warn('Notice migrasi DB:', err);
   }

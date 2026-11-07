@@ -67,6 +67,10 @@ export function useFileSystem() {
 
     const map = new Map<string, FolderNode>();
 
+    // Deduplikasi folder dengan nama dan parent yang sama agar sidebar selalu bersih tanpa duplikat
+    const seenFolderKeys = new Set<string>();
+    const uniqueFolders: typeof activeFolders = [];
+
     activeFolders.forEach((f) => {
       let resolvedParentId = normalizeFolderId(f.parentId, userId);
 
@@ -85,6 +89,15 @@ export function useFileSystem() {
         }
       }
 
+      const key = `${resolvedParentId || 'root'}:::${f.name.trim().toLowerCase()}`;
+      if (!seenFolderKeys.has(key)) {
+        seenFolderKeys.add(key);
+        uniqueFolders.push(f);
+      }
+    });
+
+    uniqueFolders.forEach((f) => {
+      const resolvedParentId = normalizeFolderId(f.parentId, userId);
       map.set(f.id, {
         id: f.id,
         name: f.name,
@@ -136,10 +149,24 @@ export function useFileSystem() {
         .filter((f) => !!f.isDeleted)
         .toArray();
     } else {
-      // Navigasi folder biasa dengan normalisasi folder target
+      // Navigasi folder biasa dengan toleransi pencocokan ID server & lokal
       const targetFolder = normalizeFolderId(currentFolderId, userId);
+      const currentFolderItem = currentFolderId ? await db.files.get(currentFolderId) : null;
+
+      let matchingFolderIds: (string | null | undefined)[] = [targetFolder, currentFolderId];
+      if (currentFolderItem && currentFolderItem.isFolder) {
+        const sameNameFolders = await db.files
+          .filter(f => !!f.isFolder && f.name.trim().toLowerCase() === currentFolderItem.name.trim().toLowerCase())
+          .toArray();
+        matchingFolderIds = [...new Set([targetFolder, currentFolderId, ...sameNameFolders.map(f => f.id)])];
+      }
+
       result = await db.files
-        .filter((f) => normalizeFolderId(f.parentId, userId) === targetFolder && !f.isDeleted)
+        .filter((f) => {
+          if (f.isDeleted) return false;
+          const pId = normalizeFolderId(f.parentId, userId);
+          return matchingFolderIds.includes(pId) || matchingFolderIds.includes(f.parentId);
+        })
         .toArray();
     }
 
@@ -218,12 +245,12 @@ export function useFileSystem() {
         }
       }
 
-      // Sinkronisasi file server ke database lokal akun ini
+      // 3. Sinkronisasi file server ke database lokal akun ini
       for (const sf of serverFiles) {
         const existing = await db.files.get(sf.id);
         const resolvedFolderId = normalizeFolderId(sf.folder_id, userId);
         if (!existing) {
-          await db.files.add({
+          await db.files.put({
             id: sf.id,
             name: sf.name,
             parentId: resolvedFolderId,
@@ -239,6 +266,49 @@ export function useFileSystem() {
           });
         } else if (existing.parentId !== resolvedFolderId) {
           await db.files.update(sf.id, { parentId: resolvedFolderId });
+        }
+      }
+
+      // 4. OTOMATIS MERGE & BERSIHKAN FOLDER DUPLIKAT DI INDEXEDDB
+      const allLocal = await db.files.toArray();
+      const localFolders = allLocal.filter(f => f.isFolder && !f.isDeleted);
+      const folderGroups: Record<string, typeof localFolders> = {};
+
+      for (const lf of localFolders) {
+        const pId = normalizeFolderId(lf.parentId, userId) || 'root';
+        const key = `${pId}:::${lf.name.trim().toLowerCase()}`;
+        if (!folderGroups[key]) folderGroups[key] = [];
+        folderGroups[key].push(lf);
+      }
+
+      for (const key of Object.keys(folderGroups)) {
+        const group = folderGroups[key];
+        if (group.length > 1) {
+          // Utamakan folder dengan ID resmi server (dimulai dengan folder_) atau yang paling awal
+          const survivor = group.find(f => f.id.startsWith('folder_')) || group[0];
+          const duplicates = group.filter(f => f.id !== survivor.id);
+
+          for (const dup of duplicates) {
+            // Pindahkan seluruh file & subfolder ke survivor
+            await db.files.where('parentId').equals(dup.id).modify({ parentId: survivor.id });
+            await db.files.delete(dup.id);
+          }
+        }
+      }
+
+      // 5. Hubungkan kembali file-file yang parentId-nya belum cocok dengan folder survivor
+      const updatedLocalFolders = await db.files.filter(f => !!f.isFolder).toArray();
+      const folderIdMap = new Map(updatedLocalFolders.map(f => [f.name.toLowerCase().trim(), f.id]));
+
+      const orphanFiles = await db.files.filter(f => !f.isFolder && !f.isDeleted).toArray();
+      for (const file of orphanFiles) {
+        if (!file.parentId || !updatedLocalFolders.some(f => f.id === file.parentId)) {
+          for (const [folderName, matchedFolderId] of folderIdMap.entries()) {
+            if (file.name.toLowerCase().includes(folderName)) {
+              await db.files.update(file.id, { parentId: matchedFolderId });
+              break;
+            }
+          }
         }
       }
     } catch (e) {
@@ -321,33 +391,45 @@ export function useFileSystem() {
     const now = Date.now();
     const rawParentId = targetParentId !== undefined ? targetParentId : currentFolderId;
     const finalParentId = normalizeFolderId(rawParentId, userId);
+    const cleanName = name.trim() || 'Folder Baru';
+    const finalColor = colorTag || '#3b82f6';
 
-    const newFolder: VirtualFile = {
-      id: 'folder-' + now + '-' + Math.random().toString(36).substring(2, 6),
-      name: name.trim() || 'Folder Baru',
-      parentId: finalParentId,
-      type: 'folder',
-      isFolder: true,
-      size: 0,
-      createdAt: now,
-      updatedAt: now,
-      colorTag: colorTag || '#3b82f6'
-    };
-    await db.files.add(newFolder);
+    // Cek apakah di database lokal sudah ada folder dengan nama dan parent yang sama
+    const existingLocal = await db.files
+      .filter((f) => !!f.isFolder && !f.isDeleted && f.name.trim().toLowerCase() === cleanName.toLowerCase() && normalizeFolderId(f.parentId, userId) === finalParentId)
+      .first();
 
-    // Kirim ke server jika login
+    if (existingLocal) {
+      return existingLocal;
+    }
+
+    let folderId = 'folder-' + now + '-' + Math.random().toString(36).substring(2, 6);
+
+    // Kirim ke server jika login (dapatkan ID resmi dari server)
     if (authService.getToken()) {
       try {
-        const cloudFolder = await cloudFileService.createFolder(newFolder.name, finalParentId || undefined, newFolder.colorTag);
+        const cloudFolder = await cloudFileService.createFolder(cleanName, finalParentId || undefined, finalColor);
         if (cloudFolder && cloudFolder.id) {
-          await db.files.update(newFolder.id, { id: cloudFolder.id });
-          newFolder.id = cloudFolder.id;
+          folderId = cloudFolder.id;
         }
       } catch (err) {
         console.warn('Gagal sync folder ke VPS:', err);
       }
     }
 
+    const newFolder: VirtualFile = {
+      id: folderId,
+      name: cleanName,
+      parentId: finalParentId,
+      type: 'folder',
+      isFolder: true,
+      size: 0,
+      createdAt: now,
+      updatedAt: now,
+      colorTag: finalColor
+    };
+
+    await db.files.put(newFolder);
     await refreshAll();
     return newFolder;
   };
@@ -358,16 +440,9 @@ export function useFileSystem() {
     const rawParentId = file.parentId !== undefined ? file.parentId : currentFolderId;
     const finalParentId = normalizeFolderId(rawParentId, userId);
 
-    const newFile: VirtualFile = {
-      ...file,
-      id: 'file-' + now + '-' + Math.random().toString(36).substring(2, 6),
-      parentId: finalParentId,
-      createdAt: now,
-      updatedAt: now
-    };
-    await db.files.add(newFile);
+    let fileId = 'file-' + now + '-' + Math.random().toString(36).substring(2, 6);
 
-    // Unggah ke VPS Cloud jika sedang login
+    // Unggah ke VPS Cloud terlebih dahulu jika sedang login agar ID server sinkron
     if (authService.getToken() && file.blob) {
       try {
         const uploaded = await cloudFileService.uploadFile(file.blob, {
@@ -377,14 +452,22 @@ export function useFileSystem() {
           thumbnail: file.thumbnail
         });
         if (uploaded && uploaded.id) {
-          await db.files.update(newFile.id, { id: uploaded.id });
-          newFile.id = uploaded.id;
+          fileId = uploaded.id;
         }
       } catch (err) {
         console.warn('Gagal mengunggah file ke cloud VPS:', err);
       }
     }
 
+    const newFile: VirtualFile = {
+      ...file,
+      id: fileId,
+      parentId: finalParentId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await db.files.put(newFile);
     await refreshAll();
     return newFile;
   };

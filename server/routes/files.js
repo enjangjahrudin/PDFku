@@ -174,10 +174,20 @@ router.post('/folder', (req, res) => {
     }
 
     const userId = req.user.id;
+    const targetParentId = resolveUserFolderId(parentId, userId);
+
+    // Cek apakah folder dengan nama dan parent yang sama sudah ada untuk user ini
+    const existing = db.prepare(`
+      SELECT * FROM folders 
+      WHERE user_id = ? AND name = ? AND (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))
+    `).get(userId, name.trim(), targetParentId || null, targetParentId || null);
+
+    if (existing) {
+      return res.status(200).json({ success: true, folder: existing });
+    }
+
     const folderId = 'folder_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
-
-    const targetParentId = resolveUserFolderId(parentId, userId);
 
     const insert = db.prepare(`
       INSERT INTO folders (id, user_id, name, parent_id, color, created_at)
