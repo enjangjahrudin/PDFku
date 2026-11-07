@@ -8,7 +8,9 @@ import {
   Folder,
   ChevronRight,
   HardDrive,
-  Menu
+  Menu,
+  Edit2,
+  Trash2
 } from 'lucide-react';
 import { FolderNode } from '../../types';
 
@@ -26,6 +28,8 @@ interface BreadcrumbProps {
   onSearchChange: (query: string) => void;
   activeNav: string;
   onOpenMobileSidebar?: () => void;
+  onRenameFolder?: (id: string, name: string) => void;
+  onDeleteFolder?: (id: string, name: string) => void;
 }
 
 export const Breadcrumb: React.FC<BreadcrumbProps> = ({
@@ -41,8 +45,24 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
   searchQuery,
   onSearchChange,
   activeNav,
-  onOpenMobileSidebar
+  onOpenMobileSidebar,
+  onRenameFolder,
+  onDeleteFolder
 }) => {
+  const isSystemFolder = (id: string | null) => {
+    if (!id) return true;
+    return (
+      id === 'folder-scan' ||
+      id === 'folder-converted' ||
+      id === 'folder-my-docs' ||
+      id === 'folder-archive' ||
+      id.startsWith('folder-scan-') ||
+      id.startsWith('folder-conv-') ||
+      id.startsWith('folder-doc-') ||
+      id.startsWith('folder-arc-')
+    );
+  };
+
   // Bangun path breadcrumb dari hierarki folder
   const buildPath = (): { id: string | null; name: string }[] => {
     if (activeNav === 'recent') return [{ id: null, name: 'Berkas Terkini (Recent)' }];
@@ -136,6 +156,34 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Action: Ganti Nama & Hapus Folder Aktif (jika bukan folder sistem) */}
+      {currentFolderId && !isSystemFolder(currentFolderId) && (
+        <div className="flex items-center space-x-1 shrink-0">
+          <button
+            onClick={() => {
+              const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+              if (onRenameFolder) onRenameFolder(currentFolderId, currentName);
+            }}
+            className="flex items-center space-x-1 px-2 py-1 text-xs text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-md border border-gray-200 transition"
+            title="Ganti nama folder ini"
+          >
+            <Edit2 className="w-3.5 h-3.5 text-blue-600" />
+            <span className="hidden md:inline font-medium text-[11px]">Ganti Nama</span>
+          </button>
+          <button
+            onClick={() => {
+              const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+              if (onDeleteFolder) onDeleteFolder(currentFolderId, currentName);
+            }}
+            className="flex items-center space-x-1 px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md border border-red-200 transition"
+            title="Hapus folder ini beserta seluruh isinya"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-red-600" />
+            <span className="hidden md:inline font-medium text-[11px]">Hapus Folder</span>
+          </button>
+        </div>
+      )}
 
       {/* Search Input Box */}
       <div className="relative w-28 sm:w-48 md:w-64 shrink-0">

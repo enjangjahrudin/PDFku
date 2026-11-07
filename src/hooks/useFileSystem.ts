@@ -14,6 +14,28 @@ export function useFileSystem() {
 
   const defaultFolderId = normalizeFolderId('folder-scan', userId) || 'folder-scan';
 
+  const isSystemRootFolder = useCallback((id: string | null) => {
+    if (!id) return true;
+    const defaultScanId = normalizeFolderId('folder-scan', userId);
+    const defaultConvId = normalizeFolderId('folder-converted', userId);
+    const defaultDocId = normalizeFolderId('folder-my-docs', userId);
+    const defaultArcId = normalizeFolderId('folder-archive', userId);
+    return (
+      id === defaultScanId ||
+      id === defaultConvId ||
+      id === defaultDocId ||
+      id === defaultArcId ||
+      id === 'folder-scan' ||
+      id === 'folder-converted' ||
+      id === 'folder-my-docs' ||
+      id === 'folder-archive' ||
+      id.startsWith('folder-scan-') ||
+      id.startsWith('folder-conv-') ||
+      id.startsWith('folder-doc-') ||
+      id.startsWith('folder-arc-')
+    );
+  }, [userId]);
+
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(defaultFolderId);
   const [files, setFiles] = useState<VirtualFile[]>([]);
   const [folderTree, setFolderTree] = useState<FolderNode[]>([]);
@@ -367,8 +389,81 @@ export function useFileSystem() {
     return newFile;
   };
 
+  // Ganti nama folder
+  const renameFolder = async (id: string, newName: string) => {
+    if (isSystemRootFolder(id)) {
+      alert('Folder sistem bawaan tidak dapat diubah namanya.');
+      return;
+    }
+    const cleanName = newName.trim();
+    if (!cleanName) return;
+
+    await db.files.update(id, { name: cleanName, updatedAt: Date.now() });
+    if (authService.getToken()) {
+      try {
+        await cloudFileService.renameFolder(id, cleanName);
+      } catch (e) {
+        console.warn('Gagal rename folder di cloud:', e);
+      }
+    }
+    await refreshAll();
+  };
+
+  // Hapus folder beserta isinya
+  const deleteFolder = async (id: string) => {
+    if (isSystemRootFolder(id)) {
+      alert('Folder sistem bawaan tidak dapat dihapus.');
+      return;
+    }
+
+    // Cari seluruh subfolder dan file di dalamnya secara rekursif di IndexedDB
+    const allItems = await db.files.toArray();
+    const folderIdsToDelete = [id];
+    let queue = [id];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const children = allItems.filter(f => f.isFolder && f.parentId === current);
+      for (const child of children) {
+        folderIdsToDelete.push(child.id);
+        queue.push(child.id);
+      }
+    }
+
+    const fileIdsToDelete = allItems
+      .filter(f => !f.isFolder && f.parentId && folderIdsToDelete.includes(f.parentId))
+      .map(f => f.id);
+
+    // Hapus dari IndexedDB
+    await db.files.bulkDelete([...folderIdsToDelete, ...fileIdsToDelete]);
+
+    // Hapus dari VPS Cloud jika login
+    if (authService.getToken()) {
+      try {
+        await cloudFileService.deleteFolder(id);
+      } catch (err) {
+        console.warn('Gagal menghapus folder di cloud:', err);
+      }
+    }
+
+    // Jika user sedang berada di folder yang dihapus, arahkan ke folder induk atau default
+    if (currentFolderId && folderIdsToDelete.includes(currentFolderId)) {
+      const deletedItem = allItems.find(f => f.id === id);
+      const parentTarget = deletedItem?.parentId ? normalizeFolderId(deletedItem.parentId, userId) : normalizeFolderId('folder-scan', userId);
+      setCurrentFolderId(parentTarget || null);
+    }
+
+    setSelectedIds(prev => prev.filter(selectedId => !folderIdsToDelete.includes(selectedId) && !fileIdsToDelete.includes(selectedId)));
+    await refreshAll();
+  };
+
   // Ganti nama file / folder
   const renameFile = async (id: string, newName: string) => {
+    const item = await db.files.get(id);
+    if (item && item.isFolder) {
+      await renameFolder(id, newName);
+      return;
+    }
+
     await db.files.update(id, { name: newName.trim(), updatedAt: Date.now() });
     if (authService.getToken()) {
       try {
@@ -418,25 +513,39 @@ export function useFileSystem() {
 
   // Pindahkan ke Recycle Bin (soft delete) atau Hapus permanen
   const deleteFiles = async (ids: string[], permanent: boolean = false) => {
-    if (permanent || activeNav === 'recycle_bin') {
-      await db.files.bulkDelete(ids);
-      if (authService.getToken()) {
-        for (const id of ids) {
-          try {
-            await cloudFileService.deleteFilePermanently(id);
-          } catch (e) {}
-        }
+    const regularFileIds: string[] = [];
+
+    for (const id of ids) {
+      const item = await db.files.get(id);
+      if (item && item.isFolder) {
+        await deleteFolder(id);
+      } else {
+        regularFileIds.push(id);
       }
-    } else {
-      await db.files.where('id').anyOf(ids).modify({ isDeleted: true, updatedAt: Date.now() });
-      if (authService.getToken()) {
-        for (const id of ids) {
-          try {
-            await cloudFileService.updateFile(id, { isTrash: true });
-          } catch (e) {}
+    }
+
+    if (regularFileIds.length > 0) {
+      if (permanent || activeNav === 'recycle_bin') {
+        await db.files.bulkDelete(regularFileIds);
+        if (authService.getToken()) {
+          for (const id of regularFileIds) {
+            try {
+              await cloudFileService.deleteFilePermanently(id);
+            } catch (e) {}
+          }
+        }
+      } else {
+        await db.files.where('id').anyOf(regularFileIds).modify({ isDeleted: true, updatedAt: Date.now() });
+        if (authService.getToken()) {
+          for (const id of regularFileIds) {
+            try {
+              await cloudFileService.updateFile(id, { isTrash: true });
+            } catch (e) {}
+          }
         }
       }
     }
+
     setSelectedIds([]);
     await refreshAll();
   };
@@ -492,6 +601,9 @@ export function useFileSystem() {
     canGoForward: historyIndex < history.length - 1,
     canGoUp: !!currentFolderId,
     createFolder,
+    renameFolder,
+    deleteFolder,
+    isSystemRootFolder,
     addFile,
     renameFile,
     moveFiles,

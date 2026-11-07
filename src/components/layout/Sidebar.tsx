@@ -10,7 +10,9 @@ import {
   HardDrive,
   FolderPlus,
   ShieldCheck,
-  X
+  X,
+  MoreVertical,
+  Edit2
 } from 'lucide-react';
 import { FolderNode } from '../../types';
 
@@ -21,6 +23,8 @@ interface SidebarProps {
   activeNav: 'folder' | 'recent' | 'favorites' | 'recycle_bin';
   setActiveNav: (nav: 'folder' | 'recent' | 'favorites' | 'recycle_bin') => void;
   onNewFolder: () => void;
+  onRenameFolder?: (id: string, name: string) => void;
+  onDeleteFolder?: (id: string, name: string) => void;
   isMobileOpen?: boolean;
   onMobileClose?: () => void;
 }
@@ -32,10 +36,50 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeNav,
   setActiveNav,
   onNewFolder,
+  onRenameFolder,
+  onDeleteFolder,
   isMobileOpen = false,
   onMobileClose
 }) => {
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [menuOpenNodeId, setMenuOpenNodeId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Tutup menu opsi saat klik di luar
+  React.useEffect(() => {
+    const handleOutsideClick = () => {
+      setMenuOpenNodeId(null);
+      setMenuPos(null);
+    };
+    if (menuOpenNodeId || menuPos) {
+      window.addEventListener('click', handleOutsideClick);
+      return () => window.removeEventListener('click', handleOutsideClick);
+    }
+  }, [menuOpenNodeId, menuPos]);
+
+  const isSystemFolder = (id: string) => {
+    return (
+      id === 'folder-scan' ||
+      id === 'folder-converted' ||
+      id === 'folder-my-docs' ||
+      id === 'folder-archive' ||
+      id.startsWith('folder-scan-') ||
+      id.startsWith('folder-conv-') ||
+      id.startsWith('folder-doc-') ||
+      id.startsWith('folder-arc-')
+    );
+  };
+
+  const findNodeInTree = (nodes: FolderNode[], id: string): FolderNode | null => {
+    for (const n of nodes) {
+      if (n.id === id) return n;
+      if (n.children && n.children.length > 0) {
+        const found = findNodeInTree(n.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
 
   React.useEffect(() => {
     if (folderTree.length > 0) {
@@ -72,19 +116,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isExpanded = !!expandedFolders[node.id];
     const isSelected = activeNav === 'folder' && currentFolderId === node.id;
     const hasChildren = node.children && node.children.length > 0;
+    const isRoot = isSystemFolder(node.id);
 
     return (
       <div key={node.id} className="select-none">
         <div
           onClick={() => handleFolderClick(node.id)}
+          onContextMenu={(e) => {
+            if (!isRoot) {
+              e.preventDefault();
+              e.stopPropagation();
+              setMenuOpenNodeId(node.id);
+              setMenuPos({ x: e.clientX, y: e.clientY });
+            }
+          }}
           style={{ paddingLeft: `${depth * 14 + 10}px` }}
-          className={`flex items-center justify-between py-1 px-2 my-0.5 rounded-md text-xs cursor-pointer transition ${
+          className={`group flex items-center justify-between py-1 px-2 my-0.5 rounded-md text-xs cursor-pointer transition ${
             isSelected
               ? 'bg-[#e0f0fd] text-blue-700 font-medium'
               : 'text-gray-700 hover:bg-gray-200/60'
           }`}
         >
-          <div className="flex items-center space-x-1.5 min-w-0">
+          <div className="flex items-center space-x-1.5 min-w-0 flex-1 mr-1">
             {hasChildren ? (
               <button
                 onClick={(e) => toggleExpand(node.id, e)}
@@ -93,7 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               </button>
             ) : (
-              <span className="w-4" />
+              <span className="w-4 shrink-0" />
             )}
 
             {isSelected ? (
@@ -105,12 +158,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="truncate">{node.name}</span>
           </div>
 
-          {node.colorTag && (
-            <span
-              className="w-2 h-2 rounded-full shrink-0 ml-1"
-              style={{ backgroundColor: node.colorTag }}
-            />
-          )}
+          <div className="flex items-center space-x-1 shrink-0">
+            {node.colorTag && (
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: node.colorTag }}
+              />
+            )}
+
+            {!isRoot && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setMenuOpenNodeId(menuOpenNodeId === node.id ? null : node.id);
+                  setMenuPos({ x: rect.right, y: rect.bottom });
+                }}
+                className="p-0.5 text-gray-400 hover:text-gray-700 hover:bg-gray-300/60 rounded opacity-0 group-hover:opacity-100 transition"
+                title="Pilihan Folder"
+              >
+                <MoreVertical className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {hasChildren && isExpanded && (
@@ -236,6 +306,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             {sidebarBody}
           </aside>
+        </div>
+      )}
+
+      {/* Floating Action Menu untuk Folder (Rename & Hapus) */}
+      {menuOpenNodeId && menuPos && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            left: `${Math.min(menuPos.x, window.innerWidth - 180)}px`,
+            top: `${Math.min(menuPos.y, window.innerHeight - 110)}px`,
+            zIndex: 9999
+          }}
+          className="bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-44 animate-in fade-in zoom-in-95 duration-75 text-xs text-gray-700 select-none"
+        >
+          <button
+            onClick={() => {
+              const node = findNodeInTree(folderTree, menuOpenNodeId);
+              if (node && onRenameFolder) {
+                onRenameFolder(node.id, node.name);
+              }
+              setMenuOpenNodeId(null);
+              setMenuPos(null);
+            }}
+            className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-blue-50 hover:text-blue-600 transition text-left"
+          >
+            <Edit2 className="w-3.5 h-3.5 text-blue-600" />
+            <span>Ganti Nama (Rename)</span>
+          </button>
+          <button
+            onClick={() => {
+              const node = findNodeInTree(folderTree, menuOpenNodeId);
+              if (node && onDeleteFolder) {
+                onDeleteFolder(node.id, node.name);
+              }
+              setMenuOpenNodeId(null);
+              setMenuPos(null);
+            }}
+            className="w-full flex items-center space-x-2 px-3 py-1.5 hover:bg-red-50 text-red-600 transition text-left border-t border-gray-100"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-red-600" />
+            <span>Hapus Folder</span>
+          </button>
         </div>
       )}
     </>

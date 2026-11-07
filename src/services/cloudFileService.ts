@@ -77,6 +77,36 @@ export const cloudFileService = {
     return data.folder;
   },
 
+  async renameFolder(id: string, name: string): Promise<ServerFolder> {
+    const res = await fetch(`/api/files/folder/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authService.getAuthHeader()
+      },
+      body: JSON.stringify({ name })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || 'Gagal mengubah nama folder.');
+    }
+
+    return data.folder;
+  },
+
+  async deleteFolder(id: string): Promise<void> {
+    const res = await fetch(`/api/files/folder/${id}`, {
+      method: 'DELETE',
+      headers: authService.getAuthHeader()
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || 'Gagal menghapus folder.');
+    }
+  },
+
   async updateFile(
     id: string,
     updates: { name?: string; folderId?: string; isStarred?: boolean; isTrash?: boolean }

@@ -15,6 +15,7 @@ import { PreviewModal } from './components/preview/PreviewModal';
 import { AuthModal } from './components/auth/AuthModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { MoveDialog } from './components/explorer/MoveDialog';
+import { ConfirmDeleteModal } from './components/explorer/ConfirmDeleteModal';
 import { useFileSystem } from './hooks/useFileSystem';
 import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/auth/LoginScreen';
@@ -51,6 +52,8 @@ export function App() {
     canGoForward,
     canGoUp,
     createFolder,
+    renameFolder,
+    deleteFolder,
     addFile,
     renameFile,
     moveFiles,
@@ -83,6 +86,30 @@ export function App() {
     targetId?: string;
     initialName?: string;
   }>({ isOpen: false, mode: 'create' });
+
+  // Delete Folder Confirmation Modal state
+  const [deleteFolderModal, setDeleteFolderModal] = useState<{
+    isOpen: boolean;
+    folderId: string;
+    folderName: string;
+  }>({ isOpen: false, folderId: '', folderName: '' });
+
+  const handleTriggerRenameFolder = (id: string, name: string) => {
+    setFolderDialogState({
+      isOpen: true,
+      mode: 'rename',
+      targetId: id,
+      initialName: name
+    });
+  };
+
+  const handleTriggerDeleteFolder = (id: string, name: string) => {
+    setDeleteFolderModal({
+      isOpen: true,
+      folderId: id,
+      folderName: name
+    });
+  };
 
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -312,15 +339,17 @@ export function App() {
         totalFilesCount={files.length}
         isAllSelected={selectedIds.length === files.length && files.length > 0}
         onToggleSelectAll={handleToggleSelectAll}
-        onDeleteSelected={() => deleteFiles(selectedIds, activeNav === 'recycle_bin')}
+        onDeleteSelected={() => {
+          const selectedFolders = files.filter(f => selectedIds.includes(f.id) && f.isFolder);
+          if (selectedFolders.length === 1 && selectedIds.length === 1) {
+            handleTriggerDeleteFolder(selectedFolders[0].id, selectedFolders[0].name);
+          } else {
+            deleteFiles(selectedIds, activeNav === 'recycle_bin');
+          }
+        }}
         onRenameSelected={() => {
           if (selectedFile) {
-            setFolderDialogState({
-              isOpen: true,
-              mode: 'rename',
-              targetId: selectedFile.id,
-              initialName: selectedFile.name
-            });
+            handleTriggerRenameFolder(selectedFile.id, selectedFile.name);
           }
         }}
         onMoveSelected={() => {
@@ -364,6 +393,8 @@ export function App() {
         onSearchChange={setSearchQuery}
         activeNav={activeNav}
         onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
+        onRenameFolder={handleTriggerRenameFolder}
+        onDeleteFolder={handleTriggerDeleteFolder}
       />
 
       {/* 4. Main Body: Sidebar + File Explorer View */}
@@ -376,6 +407,8 @@ export function App() {
           activeNav={activeNav}
           setActiveNav={setActiveNav}
           onNewFolder={() => setFolderDialogState({ isOpen: true, mode: 'create', initialName: 'Folder Baru' })}
+          onRenameFolder={handleTriggerRenameFolder}
+          onDeleteFolder={handleTriggerDeleteFolder}
           isMobileOpen={isMobileSidebarOpen}
           onMobileClose={() => setIsMobileSidebarOpen(false)}
         />
@@ -472,14 +505,15 @@ export function App() {
           onClose={() => setContextMenu(null)}
           onOpen={handleOpenFile}
           onRename={(file) => {
-            setFolderDialogState({
-              isOpen: true,
-              mode: 'rename',
-              targetId: file.id,
-              initialName: file.name
-            });
+            handleTriggerRenameFolder(file.id, file.name);
           }}
-          onDelete={(file) => deleteFiles([file.id], activeNav === 'recycle_bin')}
+          onDelete={(file) => {
+            if (file.isFolder) {
+              handleTriggerDeleteFolder(file.id, file.name);
+            } else {
+              deleteFiles([file.id], activeNav === 'recycle_bin');
+            }
+          }}
           onToggleFavorite={toggleFavorite}
           onSetColorTag={setColorTag}
           onMove={(file) => setMoveDialogState({ isOpen: true, files: [file] })}
@@ -511,6 +545,20 @@ export function App() {
             createFolder(name, colorTag);
           } else if (folderDialogState.targetId) {
             renameFile(folderDialogState.targetId, name);
+          }
+        }}
+      />
+
+      {/* Confirm Delete Folder Modal */}
+      <ConfirmDeleteModal
+        isOpen={deleteFolderModal.isOpen}
+        title="Hapus Folder"
+        itemName={deleteFolderModal.folderName}
+        itemType="folder"
+        onClose={() => setDeleteFolderModal({ isOpen: false, folderId: '', folderName: '' })}
+        onConfirm={() => {
+          if (deleteFolderModal.folderId) {
+            deleteFolder(deleteFolderModal.folderId);
           }
         }}
       />

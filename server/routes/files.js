@@ -192,6 +192,112 @@ router.post('/folder', (req, res) => {
   }
 });
 
+// 3b. Ganti Nama Folder
+router.put('/folder/:id', (req, res) => {
+  try {
+    const folderId = req.params.id;
+    const userId = req.user.id;
+    const { name, color, parentId } = req.body;
+
+    const systemRoots = [
+      `folder-scan-${userId}`, `folder-conv-${userId}`, `folder-doc-${userId}`, `folder-arc-${userId}`,
+      'folder-scan', 'folder-converted', 'folder-my-docs', 'folder-archive'
+    ];
+    if (systemRoots.includes(folderId)) {
+      return res.status(400).json({ success: false, message: 'Folder sistem bawaan tidak dapat diubah namanya.' });
+    }
+
+    const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(folderId, userId);
+    if (!folder) {
+      return res.status(404).json({ success: false, message: 'Folder tidak ditemukan.' });
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined && name.trim() !== '') {
+      updates.push('name = ?');
+      params.push(name.trim());
+    }
+    if (color !== undefined) {
+      updates.push('color = ?');
+      params.push(color);
+    }
+    if (parentId !== undefined) {
+      updates.push('parent_id = ?');
+      params.push(resolveUserFolderId(parentId, userId));
+    }
+
+    if (updates.length > 0) {
+      params.push(folderId, userId);
+      db.prepare(`UPDATE folders SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
+    }
+
+    const updated = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId);
+    return res.json({ success: true, folder: updated });
+  } catch (err) {
+    console.error('Gagal memperbarui folder:', err);
+    return res.status(500).json({ success: false, message: 'Gagal memperbarui folder.' });
+  }
+});
+
+// 3c. Hapus Folder Beserta Isinya
+router.delete('/folder/:id', (req, res) => {
+  try {
+    const folderId = req.params.id;
+    const userId = req.user.id;
+
+    const systemRoots = [
+      `folder-scan-${userId}`, `folder-conv-${userId}`, `folder-doc-${userId}`, `folder-arc-${userId}`,
+      'folder-scan', 'folder-converted', 'folder-my-docs', 'folder-archive'
+    ];
+    if (systemRoots.includes(folderId)) {
+      return res.status(400).json({ success: false, message: 'Folder sistem bawaan tidak dapat dihapus.' });
+    }
+
+    const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(folderId, userId);
+    if (!folder) {
+      return res.status(404).json({ success: false, message: 'Folder tidak ditemukan.' });
+    }
+
+    // Kumpulkan semua subfolder secara rekursif
+    const folderIdsToDelete = [folderId];
+    let queue = [folderId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const subfolders = db.prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?').all(current, userId);
+      for (const sub of subfolders) {
+        folderIdsToDelete.push(sub.id);
+        queue.push(sub.id);
+      }
+    }
+
+    // Cari dan hapus semua file fisik di disk yang berada di dalam folder-folder ini
+    const placeholders = folderIdsToDelete.map(() => '?').join(',');
+    const filesToDelete = db.prepare(`SELECT * FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`).all(...folderIdsToDelete, userId);
+
+    for (const f of filesToDelete) {
+      if (f.disk_path) {
+        const fullDiskPath = path.resolve(__dirname, '../../', f.disk_path);
+        if (fs.existsSync(fullDiskPath)) {
+          try { fs.unlinkSync(fullDiskPath); } catch (e) {}
+        }
+      }
+    }
+
+    // Hapus data file dari database
+    db.prepare(`DELETE FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`).run(...folderIdsToDelete, userId);
+
+    // Hapus folder-folder dari database
+    db.prepare(`DELETE FROM folders WHERE id IN (${placeholders}) AND user_id = ?`).run(...folderIdsToDelete, userId);
+
+    return res.json({ success: true, message: 'Folder dan seluruh isinya berhasil dihapus.' });
+  } catch (err) {
+    console.error('Gagal menghapus folder:', err);
+    return res.status(500).json({ success: false, message: 'Gagal menghapus folder.' });
+  }
+});
+
 // 4. Update File (Rename, Move Folder, Star, Trash, Restore)
 router.put('/:id', (req, res) => {
   try {
