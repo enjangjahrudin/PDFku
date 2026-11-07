@@ -33,9 +33,36 @@ export function useFileSystem() {
     const allFiles = await db.files.toArray();
     const activeFolders = allFiles.filter((f) => !!f.isFolder && !f.isDeleted);
 
+    const defaultScanId = normalizeFolderId('folder-scan', userId);
+    const defaultConvId = normalizeFolderId('folder-converted', userId);
+    const defaultDocId = normalizeFolderId('folder-my-docs', userId);
+    const defaultArcId = normalizeFolderId('folder-archive', userId);
+
+    const isSystemRoot = (id: string) =>
+      id === defaultScanId || id === defaultConvId || id === defaultDocId || id === defaultArcId ||
+      id === 'folder-scan' || id === 'folder-converted' || id === 'folder-my-docs' || id === 'folder-archive' ||
+      id.startsWith('folder-scan-') || id.startsWith('folder-conv-') || id.startsWith('folder-doc-') || id.startsWith('folder-arc-');
+
     const map = new Map<string, FolderNode>();
+
     activeFolders.forEach((f) => {
-      const resolvedParentId = normalizeFolderId(f.parentId, userId);
+      let resolvedParentId = normalizeFolderId(f.parentId, userId);
+
+      // Jika bukan folder root bawaan, pastikan memiliki induk (tidak sejajar di root)
+      if (!isSystemRoot(f.id) && (!resolvedParentId || resolvedParentId === f.id)) {
+        if (f.colorTag === '#10b981') {
+          resolvedParentId = defaultConvId; // Masuk ke subfolder Hasil Konversi
+        } else {
+          resolvedParentId = defaultScanId; // Masuk ke subfolder Hasil Scan
+        }
+
+        // Perbarui di database
+        db.files.update(f.id, { parentId: resolvedParentId }).catch(() => {});
+        if (authService.getToken()) {
+          cloudFileService.updateFile(f.id, { folderId: resolvedParentId || undefined }).catch(() => {});
+        }
+      }
+
       map.set(f.id, {
         id: f.id,
         name: f.name,
@@ -47,11 +74,22 @@ export function useFileSystem() {
 
     const rootNodes: FolderNode[] = [];
     map.forEach((node) => {
-      if (node.parentId && map.has(node.parentId)) {
+      if (node.parentId && map.has(node.parentId) && node.parentId !== node.id) {
         map.get(node.parentId)!.children!.push(node);
       } else {
         rootNodes.push(node);
       }
+    });
+
+    // Urutkan root folders: Hasil Scan di atas, lalu Hasil Konversi, Dokumen Saya, Arsip
+    rootNodes.sort((a, b) => {
+      const order = [defaultScanId, defaultConvId, defaultDocId, defaultArcId];
+      const idxA = order.indexOf(a.id);
+      const idxB = order.indexOf(b.id);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.name.localeCompare(b.name);
     });
 
     setFolderTree(rootNodes);

@@ -79,6 +79,19 @@ export function initDb() {
       UPDATE folders SET parent_id = 'folder-doc-' || user_id WHERE parent_id = 'folder-my-docs';
       UPDATE folders SET parent_id = 'folder-arc-' || user_id WHERE parent_id = 'folder-archive';
 
+      -- Pindahkan sub-folder hasil scan & konversi yang sebelumnya tidak sengaja berada di root
+      UPDATE folders 
+      SET parent_id = 'folder-scan-' || user_id 
+      WHERE (color = '#14b8a6' OR color = '#3b82f6') 
+        AND (parent_id IS NULL OR parent_id = '' OR parent_id = 'folder-scan')
+        AND id NOT LIKE 'folder-scan-%';
+
+      UPDATE folders 
+      SET parent_id = 'folder-conv-' || user_id 
+      WHERE color = '#10b981' 
+        AND (parent_id IS NULL OR parent_id = '' OR parent_id = 'folder-converted')
+        AND id NOT LIKE 'folder-conv-%';
+
       UPDATE files SET folder_id = 'folder-conv-' || user_id WHERE folder_id = 'folder-converted';
       UPDATE files SET folder_id = 'folder-scan-' || user_id WHERE folder_id = 'folder-scan';
       UPDATE files SET folder_id = 'folder-doc-' || user_id WHERE folder_id = 'folder-my-docs';
