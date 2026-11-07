@@ -166,8 +166,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="flex items-center space-x-1 hover:text-blue-600 transition"
               title="Lihat Semua Folder (Home)"
             >
-              <HardDrive className="w-3 h-3 text-gray-500" />
-              <span>Penyimpanan Lokal</span>
+              <HardDrive className="w-3 h-3 text-blue-600" />
+              <span>Folder Dokumen</span>
             </button>
             <button
               onClick={() => {
@@ -191,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-2.5 border-t border-gray-200 bg-white/50 text-[11px] text-gray-500 flex items-center space-x-2">
         <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
         <span className="leading-tight">
-          Penyimpanan offline lokal di perangkat ini.
+          Brankas dokumen terisolasi & tersinkron ke VPS.
         </span>
       </div>
     </>

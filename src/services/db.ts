@@ -1,24 +1,34 @@
 import Dexie, { type Table } from 'dexie';
 import { VirtualFile } from '../types';
 
-export class SmartDocDatabase extends Dexie {
+export class PDFkuDatabase extends Dexie {
   files!: Table<VirtualFile, string>;
 
-  constructor() {
-    super('SmartDocDB');
+  constructor(dbName: string) {
+    super(dbName);
     this.version(1).stores({
       files: 'id, parentId, name, type, isFolder, isDeleted, isFavorite, createdAt, updatedAt'
     });
   }
 }
 
-export const db = new SmartDocDatabase();
+// Cache database per ID pengguna untuk isolasi total
+const dbInstances = new Map<string, PDFkuDatabase>();
 
-// Inisialisasi folder bawaan (Pastikan selalu ada di database)
-export async function initializeDefaultFolders(): Promise<void> {
+export function getDatabaseForUser(userId?: number | string | null): PDFkuDatabase {
+  const key = userId ? `PDFkuDB_User_${userId}` : 'PDFkuDB_Temp';
+  if (!dbInstances.has(key)) {
+    dbInstances.set(key, new PDFkuDatabase(key));
+  }
+  return dbInstances.get(key)!;
+}
+
+// Inisialisasi folder bawaan per pengguna (jika baru pertama kali dan offline)
+export async function initializeUserDefaultFolders(db: PDFkuDatabase, userId?: number | string | null): Promise<void> {
+  const uId = userId || 'default';
   const defaultFolders: VirtualFile[] = [
     {
-      id: 'folder-scan',
+      id: `folder-scan-${uId}`,
       name: 'Hasil Scan',
       parentId: null,
       type: 'folder',
@@ -29,7 +39,7 @@ export async function initializeDefaultFolders(): Promise<void> {
       colorTag: '#3b82f6'
     },
     {
-      id: 'folder-converted',
+      id: `folder-conv-${uId}`,
       name: 'Hasil Konversi',
       parentId: null,
       type: 'folder',
@@ -40,7 +50,7 @@ export async function initializeDefaultFolders(): Promise<void> {
       colorTag: '#10b981'
     },
     {
-      id: 'folder-my-docs',
+      id: `folder-doc-${uId}`,
       name: 'Dokumen Saya',
       parentId: null,
       type: 'folder',
@@ -51,7 +61,7 @@ export async function initializeDefaultFolders(): Promise<void> {
       colorTag: '#f59e0b'
     },
     {
-      id: 'folder-archive',
+      id: `folder-arc-${uId}`,
       name: 'Arsip Dokumen',
       parentId: null,
       type: 'folder',

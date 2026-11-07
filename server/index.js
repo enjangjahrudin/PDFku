@@ -21,10 +21,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Static uploads serving (opsional jika dibutuhkan langsung)
-app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
-
-// API Routes
+// API Routes (Akses berkas wajib melalui /api/files dengan autentikasi per-user)
 app.use('/api/auth', authRoutes);
 app.use('/api/files', filesRoutes);
 app.use('/api/admin', adminRoutes);

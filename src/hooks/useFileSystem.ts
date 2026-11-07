@@ -1,11 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { VirtualFile, FolderNode } from '../types';
-import { db, initializeDefaultFolders } from '../services/db';
+import { getDatabaseForUser, initializeUserDefaultFolders } from '../services/db';
 import { authService } from '../services/authService';
 import { cloudFileService } from '../services/cloudFileService';
+import { useAuth } from '../context/AuthContext';
 
 export function useFileSystem() {
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>('folder-scan');
+  const { user } = useAuth();
+  const userId = user?.id;
+
+  // Database IndexedDB terisolasi 100% per akun
+  const db = useMemo(() => getDatabaseForUser(userId), [userId]);
+
+  const defaultFolderId = userId ? `folder-scan-${userId}` : 'folder-scan';
+
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(defaultFolderId);
   const [files, setFiles] = useState<VirtualFile[]>([]);
   const [folderTree, setFolderTree] = useState<FolderNode[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -16,7 +25,7 @@ export function useFileSystem() {
   const [activeNav, setActiveNav] = useState<'folder' | 'recent' | 'favorites' | 'recycle_bin'>('folder');
 
   // History navigasi back / forward
-  const [history, setHistory] = useState<(string | null)[]>(['folder-scan']);
+  const [history, setHistory] = useState<(string | null)[]>([defaultFolderId]);
   const [historyIndex, setHistoryIndex] = useState(0);
 
   // Muat folder tree
@@ -45,7 +54,7 @@ export function useFileSystem() {
     });
 
     setFolderTree(rootNodes);
-  }, []);
+  }, [db]);
 
   // Muat files berdasarkan navigasi aktif
   const loadCurrentFiles = useCallback(async () => {
@@ -84,7 +93,6 @@ export function useFileSystem() {
 
     // Sorting
     result.sort((a, b) => {
-      // Folder selalu di atas berkas
       if (a.isFolder && !b.isFolder) return -1;
       if (!a.isFolder && b.isFolder) return 1;
 
@@ -101,19 +109,20 @@ export function useFileSystem() {
     });
 
     setFiles(result);
-  }, [activeNav, currentFolderId, searchQuery, sortBy, sortOrder]);
+  }, [db, activeNav, currentFolderId, searchQuery, sortBy, sortOrder]);
 
   const refreshAll = useCallback(async () => {
     await loadFolderTree();
     await loadCurrentFiles();
   }, [loadFolderTree, loadCurrentFiles]);
 
-  // Sinkronisasi data dari VPS Cloud jika pengguna sedang login
+  // Sinkronisasi data dari VPS Cloud khusus untuk akun user ini
   const syncWithCloud = useCallback(async () => {
-    if (!authService.getToken()) return;
+    if (!authService.getToken() || !userId) return;
     try {
       const { folders: serverFolders, files: serverFiles } = await cloudFileService.fetchFiles({ view: 'all' });
 
+      // Sinkronisasi folder server ke database lokal akun ini
       for (const sf of serverFolders) {
         const existing = await db.files.get(sf.id);
         if (!existing) {
@@ -131,6 +140,7 @@ export function useFileSystem() {
         }
       }
 
+      // Sinkronisasi file server ke database lokal akun ini
       for (const sf of serverFiles) {
         const existing = await db.files.get(sf.id);
         if (!existing) {
@@ -153,16 +163,22 @@ export function useFileSystem() {
     } catch (e) {
       console.warn('Gagal sinkronisasi dari cloud VPS:', e);
     }
-  }, []);
+  }, [userId, db]);
 
-  // Inisialisasi awal
+  // Ketika akun user berubah (login / ganti akun), inisialisasi ulang storage
   useEffect(() => {
+    const initialFolder = userId ? `folder-scan-${userId}` : 'folder-scan';
+    setCurrentFolderId(initialFolder);
+    setHistory([initialFolder]);
+    setHistoryIndex(0);
+    setSelectedIds([]);
+
     (async () => {
-      await initializeDefaultFolders();
+      await initializeUserDefaultFolders(db, userId);
       await syncWithCloud();
       await refreshAll();
     })();
-  }, [syncWithCloud, refreshAll]);
+  }, [userId, db, syncWithCloud, refreshAll]);
 
   useEffect(() => {
     loadCurrentFiles();

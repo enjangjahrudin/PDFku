@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { db } from '../db.js';
+import { db, seedDefaultFolders } from '../db.js';
 import { authenticateToken } from '../middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,8 +40,12 @@ router.get('/', (req, res) => {
     const { folderId, search, view } = req.query;
     const userId = req.user.id;
 
-    // Ambil semua folder user
-    const folders = db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC').all(userId);
+    // Ambil semua folder user (buat default jika baru pertama kali)
+    let folders = db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC').all(userId);
+    if (folders.length === 0) {
+      seedDefaultFolders(userId);
+      folders = db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC').all(userId);
+    }
 
     let filesQuery = 'SELECT * FROM files WHERE user_id = ?';
     const params = [userId];

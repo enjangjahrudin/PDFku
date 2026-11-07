@@ -16,14 +16,17 @@ import { AuthModal } from './components/auth/AuthModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { MoveDialog } from './components/explorer/MoveDialog';
 import { useFileSystem } from './hooks/useFileSystem';
+import { useAuth } from './context/AuthContext';
+import { LoginScreen } from './components/auth/LoginScreen';
 import { VirtualFile } from './types';
 import { getFileExtension } from './utils/formatters';
-import { Camera, Folder, FileText, Sparkles, Layers } from 'lucide-react';
+import { Camera, Folder, FileText, Sparkles, Layers, Scan, Loader2 } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { convertJpgToPdf } from './services/pdfService';
 
 export function App() {
+  const { isAuthenticated, isLoading } = useAuth();
   const {
     currentFolderId,
     files,
@@ -267,6 +270,24 @@ export function App() {
   };
 
   const selectedFile = selectedIds.length === 1 ? files.find(f => f.id === selectedIds[0]) : null;
+
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-white select-none">
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-xl shadow-blue-500/25 mb-4 animate-pulse">
+          <Scan className="w-7 h-7 text-white" />
+        </div>
+        <div className="flex items-center gap-2 text-sm text-slate-300">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+          <span>Memuat sesi PDFku...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
 
   return (
     <div
