@@ -320,6 +320,34 @@ export function useFileSystem() {
           }
         }
       }
+
+      // 6. Unggah otomatis berkas lokal (file-...) yang sebelumnya tertahan batas ukuran ke database MySQL
+      const serverFileNames = new Set(serverFiles.map(sf => sf.name.trim().toLowerCase()));
+      const unsyncedLocalFiles = await db.files
+        .filter(f => !f.isFolder && !f.isDeleted && f.id.startsWith('file-') && !!f.blob)
+        .toArray();
+
+      for (const localFile of unsyncedLocalFiles) {
+        if (!serverFileNames.has(localFile.name.trim().toLowerCase())) {
+          try {
+            const uploaded = await cloudFileService.uploadFile(localFile.blob!, {
+              name: localFile.name,
+              folderId: localFile.parentId || undefined,
+              ocrText: localFile.ocrText,
+              thumbnail: localFile.thumbnail
+            });
+            if (uploaded && uploaded.id) {
+              await db.files.delete(localFile.id);
+              await db.files.put({
+                ...localFile,
+                id: uploaded.id
+              });
+            }
+          } catch (upErr) {
+            console.warn('Gagal mengunggah berkas lokal tertunda ke MySQL:', upErr);
+          }
+        }
+      }
     } catch (e) {
       console.warn('Gagal sinkronisasi dari cloud VPS:', e);
     }

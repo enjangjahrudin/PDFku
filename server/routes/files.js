@@ -28,7 +28,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100 MB max per file
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100 MB max per file
+    fieldSize: 50 * 1024 * 1024  // 50 MB max per field (thumbnail / ocrText)
+  }
 });
 
 const router = express.Router();
@@ -166,6 +169,107 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   } catch (err) {
     console.error('Error upload file:', err);
     return res.status(500).json({ success: false, message: 'Gagal mengunggah berkas ke server.' });
+  }
+});
+
+// 2b. Upload berkas per bagian (Chunked Upload) untuk menembus batas 1MB Nginx reverse proxy
+router.post('/upload-chunk', async (req, res) => {
+  try {
+    const {
+      uploadId,
+      chunkIndex,
+      totalChunks,
+      chunkBase64,
+      name,
+      mimeType,
+      folderId,
+      ocrText,
+      thumbnail
+    } = req.body;
+
+    if (!uploadId || chunkIndex === undefined || !totalChunks || !chunkBase64) {
+      return res.status(400).json({ success: false, message: 'Parameter chunk tidak lengkap.' });
+    }
+
+    const userId = req.user.id;
+    const userDir = path.join(uploadsBaseDir, `user_${userId}`);
+    if (!fs.existsSync(userDir)) {
+      fs.mkdirSync(userDir, { recursive: true });
+    }
+
+    const safeUploadId = String(uploadId).replace(/[^a-zA-Z0-9_-]/g, '');
+    const tempFilePath = path.join(userDir, `tmp_${safeUploadId}.part`);
+    const buffer = Buffer.from(chunkBase64, 'base64');
+
+    if (Number(chunkIndex) === 0 && fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+
+    fs.appendFileSync(tempFilePath, buffer);
+
+    // Jika belum chunk terakhir, kembalikan status OK untuk lanjut ke chunk berikutnya
+    if (Number(chunkIndex) + 1 < Number(totalChunks)) {
+      return res.status(200).json({
+        success: true,
+        status: 'chunk_received',
+        chunkIndex: Number(chunkIndex)
+      });
+    }
+
+    // Chunk terakhir selesai: finalisasi berkas & simpan ke database MySQL
+    const finalStats = fs.statSync(tempFilePath);
+    const fileSize = finalStats.size;
+
+    const currentUsage = await db.get('SELECT COALESCE(SUM(size), 0) as used_bytes FROM files WHERE user_id = ?', [userId]);
+    const usedBytes = currentUsage ? Number(currentUsage.used_bytes) : 0;
+    if (usedBytes + fileSize > req.user.storage_quota) {
+      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+      return res.status(400).json({
+        success: false,
+        message: 'Kapasitas penyimpanan akun Anda telah penuh.'
+      });
+    }
+
+    const fileName = name || 'dokumen.jpg';
+    const ext = path.extname(fileName) || '.jpg';
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const finalFileName = `doc_${uniqueSuffix}${ext}`;
+    const finalFilePath = path.join(userDir, finalFileName);
+
+    fs.renameSync(tempFilePath, finalFilePath);
+
+    const fileId = 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const fileType = mimeType || 'image/jpeg';
+    const now = new Date().toISOString();
+    const relativeDiskPath = path.relative(path.resolve(__dirname, '../../'), finalFilePath).replace(/\\/g, '/');
+    const targetFolderId = resolveUserFolderId(folderId, userId);
+
+    await db.run(`
+      INSERT INTO files (id, user_id, name, type, size, disk_path, thumbnail, folder_id, ocr_text, is_starred, is_trash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+    `, [
+      fileId,
+      userId,
+      fileName,
+      fileType,
+      fileSize,
+      relativeDiskPath,
+      thumbnail || null,
+      targetFolderId || null,
+      ocrText || null,
+      now,
+      now
+    ]);
+
+    const savedFile = await db.get('SELECT * FROM files WHERE id = ?', [fileId]);
+    return res.status(201).json({
+      success: true,
+      message: 'Berkas berhasil disimpan ke database MySQL.',
+      file: savedFile
+    });
+  } catch (err) {
+    console.error('Error upload chunk:', err);
+    return res.status(500).json({ success: false, message: 'Gagal mengunggah bagian berkas.' });
   }
 });
 

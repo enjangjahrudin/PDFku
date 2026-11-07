@@ -11,6 +11,55 @@ export interface CloudFetchResult {
   };
 }
 
+// Perkecil ukuran thumbnail base64 agar ringan di database MySQL & tidak melewati batas 1MB Nginx
+async function compressThumbnail(dataUrl?: string): Promise<string | undefined> {
+  if (!dataUrl || !dataUrl.startsWith('data:image')) return dataUrl;
+  // Jika sudah kecil (< 35 KB), langsung gunakan
+  if (dataUrl.length < 35000) return dataUrl;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxDim = 280;
+        let width = img.width;
+        let height = img.height;
+        if (width > height && width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else if (height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.6));
+        } else {
+          resolve(dataUrl.substring(0, 30000));
+        }
+      } catch {
+        resolve(undefined);
+      }
+    };
+    img.onerror = () => resolve(undefined);
+    img.src = dataUrl;
+  });
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(binary);
+}
+
 export const cloudFileService = {
   async fetchFiles(params?: { folderId?: string; search?: string; view?: string }): Promise<CloudFetchResult> {
     const query = new URLSearchParams();
@@ -34,29 +83,92 @@ export const cloudFileService = {
     };
   },
 
+  async uploadFileChunked(
+    fileBlob: Blob,
+    metadata: { name: string; folderId?: string; ocrText?: string; thumbnail?: string }
+  ): Promise<ServerFile> {
+    const CHUNK_SIZE = 350 * 1024; // 350 KB per bagian (aman di bawah limit 1MB Nginx)
+    const totalChunks = Math.max(1, Math.ceil(fileBlob.size / CHUNK_SIZE));
+    const uploadId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const compactThumb = await compressThumbnail(metadata.thumbnail);
+
+    let lastResult: any = null;
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, fileBlob.size);
+      const slice = fileBlob.slice(start, end);
+      const arrayBuf = await slice.arrayBuffer();
+      const chunkBase64 = arrayBufferToBase64(arrayBuf);
+
+      const isLast = chunkIndex === totalChunks - 1;
+      const res = await fetch('/api/files/upload-chunk', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authService.getAuthHeader()
+        },
+        body: JSON.stringify({
+          uploadId,
+          chunkIndex,
+          totalChunks,
+          chunkBase64,
+          name: metadata.name,
+          mimeType: fileBlob.type || (metadata.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+          folderId: metadata.folderId,
+          ocrText: isLast ? metadata.ocrText : undefined,
+          thumbnail: isLast ? compactThumb : undefined
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || `Gagal mengunggah bagian ${chunkIndex + 1}/${totalChunks}`);
+      }
+      lastResult = data;
+    }
+
+    return lastResult.file;
+  },
+
   async uploadFile(
     fileBlob: Blob,
     metadata: { name: string; folderId?: string; ocrText?: string; thumbnail?: string }
   ): Promise<ServerFile> {
-    const formData = new FormData();
-    formData.append('file', fileBlob, metadata.name);
-    formData.append('name', metadata.name);
-    if (metadata.folderId) formData.append('folderId', metadata.folderId);
-    if (metadata.ocrText) formData.append('ocrText', metadata.ocrText);
-    if (metadata.thumbnail) formData.append('thumbnail', metadata.thumbnail);
+    const compactThumb = await compressThumbnail(metadata.thumbnail);
 
-    const res = await fetch('/api/files/upload', {
-      method: 'POST',
-      headers: authService.getAuthHeader(),
-      body: formData
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || 'Gagal mengunggah berkas ke VPS.');
+    // Jika ukuran file > 450 KB, gunakan Chunked Upload agar tidak ditolak batas 1MB Nginx
+    if (fileBlob.size > 450 * 1024) {
+      return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
     }
 
-    return data.file;
+    try {
+      const formData = new FormData();
+      formData.append('file', fileBlob, metadata.name);
+      formData.append('name', metadata.name);
+      if (metadata.folderId) formData.append('folderId', metadata.folderId);
+      if (metadata.ocrText) formData.append('ocrText', metadata.ocrText);
+      if (compactThumb) formData.append('thumbnail', compactThumb);
+
+      const res = await fetch('/api/files/upload', {
+        method: 'POST',
+        headers: authService.getAuthHeader(),
+        body: formData
+      });
+
+      if (!res.ok) {
+        return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+      }
+
+      const data = await res.json();
+      if (!data.success) {
+        return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+      }
+
+      return data.file;
+    } catch {
+      return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+    }
   },
 
   async createFolder(name: string, parentId?: string, color?: string): Promise<ServerFolder> {
