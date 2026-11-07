@@ -181,27 +181,18 @@ router.post('/folder', async (req, res) => {
     const targetParentId = resolveUserFolderId(parentId, userId);
     const cleanName = name.trim();
 
-    // Cek apakah folder dengan nama yang sama sudah ada untuk user ini di parent ini
-    let existing = null;
-    if (targetParentId) {
-      const altParentId = targetParentId.includes('-') 
-        ? targetParentId.replace(/-/g, '_') 
-        : targetParentId.replace(/_/g, '-');
-
-      existing = await db.get(`
-        SELECT * FROM folders 
-        WHERE user_id = ? AND LOWER(name) = LOWER(?) AND (parent_id = ? OR parent_id = ?)
-        LIMIT 1
-      `, [userId, cleanName, targetParentId, altParentId]);
-    } else {
-      existing = await db.get(`
-        SELECT * FROM folders 
-        WHERE user_id = ? AND LOWER(name) = LOWER(?) AND (parent_id IS NULL OR parent_id = '')
-        LIMIT 1
-      `, [userId, cleanName]);
-    }
+    // Cek apakah folder dengan nama yang sama sudah ada untuk user ini
+    const existing = await db.get(`
+      SELECT * FROM folders 
+      WHERE user_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+      LIMIT 1
+    `, [userId, cleanName]);
 
     if (existing) {
+      if (targetParentId && existing.parent_id !== targetParentId) {
+        await db.run('UPDATE folders SET parent_id = ? WHERE id = ?', [targetParentId, existing.id]);
+        existing.parent_id = targetParentId;
+      }
       return res.status(200).json({ success: true, folder: existing });
     }
 
@@ -307,14 +298,17 @@ router.delete('/folder/:id', async (req, res) => {
     }
 
     // Kumpulkan semua ID folder yang sama atau subfolder secara rekursif
-    // Termasuk duplikat folder dengan nama dan parent yang sama
-    const targetParent = folder.parent_id || null;
+    // Termasuk seluruh duplikat folder dengan nama yang sama milik user ini
     const matchingFolders = await db.all(
-      'SELECT id FROM folders WHERE user_id = ? AND (id = ? OR (LOWER(name) = LOWER(?) AND (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))))',
-      [userId, folder.id, folder.name, targetParent, targetParent]
+      'SELECT id FROM folders WHERE user_id = ? AND (id = ? OR LOWER(TRIM(name)) = LOWER(TRIM(?)))',
+      [userId, folder.id, folder.name]
     );
 
-    const folderIdsToDelete = Array.from(new Set([folder.id, ...matchingFolders.map(f => f.id)]));
+    const folderIdsToDelete = Array.from(
+      new Set(
+        [folder.id, ...matchingFolders.map(f => f.id)].filter(fid => !systemRoots.includes(fid))
+      )
+    );
     let queue = [...folderIdsToDelete];
 
     while (queue.length > 0) {

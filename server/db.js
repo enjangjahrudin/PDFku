@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 // Pastikan direktori data & uploads tersedia
 const dataDir = path.resolve(__dirname, '../data');
 const uploadsDir = path.resolve(__dirname, '../uploads');
+const envPath = path.resolve(__dirname, '../.env');
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -27,6 +28,7 @@ const dbPath = path.join(dataDir, 'pdfku.db');
 let pool = null;
 let sqliteDb = null;
 export let isMySQL = false;
+export let lastMysqlError = null;
 
 export const db = {
   async get(sql, params = []) {
@@ -78,6 +80,235 @@ export const db = {
   }
 };
 
+export function getDbConfigInfo() {
+  return {
+    engine: isMySQL ? 'MySQL Server' : 'SQLite Lokal (Fallback)',
+    isMySQL,
+    host: process.env.DB_HOST || '127.0.0.1',
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    user: process.env.DB_USER || 'root',
+    database: process.env.DB_NAME || 'pdfku_db',
+    lastError: lastMysqlError
+  };
+}
+
+// Migrasi otomatis data lama dari SQLite (pdfku.db) ke MySQL Server agar tidak ada akun/berkas yang hilang
+async function migrateSqliteToMySQLIfNeeded() {
+  if (!isMySQL || !pool || !fs.existsSync(dbPath)) return;
+
+  let legacyDb = null;
+  try {
+    legacyDb = new Database(dbPath, { readonly: true });
+
+    // Cek apakah tabel users ada di SQLite lama
+    const hasUsersTable = legacyDb
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+      .get();
+    if (!hasUsersTable) {
+      legacyDb.close();
+      return;
+    }
+
+    const oldUsers = legacyDb.prepare('SELECT * FROM users').all();
+    for (const u of oldUsers) {
+      await pool.query(
+        `INSERT IGNORE INTO users (id, username, email, password_hash, name, role, status, storage_quota, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          u.id,
+          u.username,
+          u.email,
+          u.password_hash,
+          u.name,
+          u.role || 'user',
+          u.status || 'active',
+          u.storage_quota || 1073741824,
+          u.created_at || new Date().toISOString(),
+          u.updated_at || new Date().toISOString()
+        ]
+      );
+    }
+
+    const hasFoldersTable = legacyDb
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='folders'")
+      .get();
+    if (hasFoldersTable) {
+      const oldFolders = legacyDb.prepare('SELECT * FROM folders').all();
+      for (const f of oldFolders) {
+        await pool.query(
+          `INSERT IGNORE INTO folders (id, user_id, name, parent_id, color, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            f.id,
+            f.user_id,
+            f.name,
+            f.parent_id || null,
+            f.color || '#3b82f6',
+            f.created_at || new Date().toISOString()
+          ]
+        );
+      }
+    }
+
+    const hasFilesTable = legacyDb
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='files'")
+      .get();
+    if (hasFilesTable) {
+      const oldFiles = legacyDb.prepare('SELECT * FROM files').all();
+      for (const file of oldFiles) {
+        await pool.query(
+          `INSERT IGNORE INTO files (id, user_id, name, type, size, disk_path, thumbnail, folder_id, ocr_text, is_starred, is_trash, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            file.id,
+            file.user_id,
+            file.name,
+            file.type,
+            file.size || 0,
+            file.disk_path,
+            file.thumbnail || null,
+            file.folder_id || null,
+            file.ocr_text || null,
+            file.is_starred || 0,
+            file.is_trash || 0,
+            file.created_at || new Date().toISOString(),
+            file.updated_at || new Date().toISOString()
+          ]
+        );
+      }
+    }
+
+    legacyDb.close();
+    console.log('✅ Sinkronisasi & migrasi data dari SQLite lama ke MySQL Server selesai.');
+  } catch (err) {
+    if (legacyDb) {
+      try { legacyDb.close(); } catch (e) {}
+    }
+    console.warn('Notice migrasi SQLite -> MySQL:', err.message);
+  }
+}
+
+// Normalisasi hierarki folder, hapus duplikat folder, dan tautkan ulang berkas ke folder yang tepat
+export async function cleanAndDeduplicateDatabase() {
+  try {
+    // 1. Normalisasi generic parent_id & folder_id
+    if (isMySQL) {
+      await db.run("UPDATE folders SET parent_id = CONCAT('folder-conv-', user_id) WHERE parent_id = 'folder-converted' OR parent_id = 'folder-conv'");
+      await db.run("UPDATE folders SET parent_id = CONCAT('folder-scan-', user_id) WHERE parent_id = 'folder-scan'");
+      await db.run("UPDATE folders SET parent_id = CONCAT('folder-doc-', user_id) WHERE parent_id = 'folder-my-docs' OR parent_id = 'folder-doc'");
+      await db.run("UPDATE folders SET parent_id = CONCAT('folder-arc-', user_id) WHERE parent_id = 'folder-archive' OR parent_id = 'folder-arc'");
+
+      await db.run(`
+        UPDATE folders 
+        SET parent_id = CASE WHEN color = '#10b981' THEN CONCAT('folder-conv-', user_id) ELSE CONCAT('folder-scan-', user_id) END
+        WHERE (parent_id IS NULL OR parent_id = '')
+          AND id NOT LIKE 'folder-scan-%'
+          AND id NOT LIKE 'folder-conv-%'
+          AND id NOT LIKE 'folder-doc-%'
+          AND id NOT LIKE 'folder-arc-%'
+      `);
+
+      await db.run("UPDATE files SET folder_id = CONCAT('folder-conv-', user_id) WHERE folder_id = 'folder-converted' OR folder_id = 'folder-conv'");
+      await db.run("UPDATE files SET folder_id = CONCAT('folder-scan-', user_id) WHERE folder_id = 'folder-scan'");
+      await db.run("UPDATE files SET folder_id = CONCAT('folder-doc-', user_id) WHERE folder_id = 'folder-my-docs' OR folder_id = 'folder-doc'");
+      await db.run("UPDATE files SET folder_id = CONCAT('folder-arc-', user_id) WHERE folder_id = 'folder-archive' OR folder_id = 'folder-arc'");
+    } else {
+      await db.run("UPDATE folders SET parent_id = 'folder-conv-' || user_id WHERE parent_id = 'folder-converted' OR parent_id = 'folder-conv'");
+      await db.run("UPDATE folders SET parent_id = 'folder-scan-' || user_id WHERE parent_id = 'folder-scan'");
+      await db.run("UPDATE folders SET parent_id = 'folder-doc-' || user_id WHERE parent_id = 'folder-my-docs' OR parent_id = 'folder-doc'");
+      await db.run("UPDATE folders SET parent_id = 'folder-arc-' || user_id WHERE parent_id = 'folder-archive' OR parent_id = 'folder-arc'");
+
+      await db.run(`
+        UPDATE folders 
+        SET parent_id = CASE WHEN color = '#10b981' THEN 'folder-conv-' || user_id ELSE 'folder-scan-' || user_id END
+        WHERE (parent_id IS NULL OR parent_id = '')
+          AND id NOT LIKE 'folder-scan-%'
+          AND id NOT LIKE 'folder-conv-%'
+          AND id NOT LIKE 'folder-doc-%'
+          AND id NOT LIKE 'folder-arc-%'
+      `);
+
+      await db.run("UPDATE files SET folder_id = 'folder-conv-' || user_id WHERE folder_id = 'folder-converted' OR folder_id = 'folder-conv'");
+      await db.run("UPDATE files SET folder_id = 'folder-scan-' || user_id WHERE folder_id = 'folder-scan'");
+      await db.run("UPDATE files SET folder_id = 'folder-doc-' || user_id WHERE folder_id = 'folder-my-docs' OR folder_id = 'folder-doc'");
+      await db.run("UPDATE files SET folder_id = 'folder-arc-' || user_id WHERE folder_id = 'folder-archive' OR folder_id = 'folder-arc'");
+    }
+
+    // 2. Ambil seluruh folder dan gabungkan duplikat dengan nama yang sama per user
+    const allFolders = await db.all('SELECT * FROM folders ORDER BY created_at ASC');
+    const folderGroups = new Map();
+
+    for (const f of allFolders) {
+      const isSys =
+        f.id.startsWith('folder-scan-') ||
+        f.id.startsWith('folder-conv-') ||
+        f.id.startsWith('folder-doc-') ||
+        f.id.startsWith('folder-arc-');
+      const key = isSys
+        ? `sys:::${f.id}`
+        : `${f.user_id}:::${f.name.trim().toLowerCase()}`;
+      if (!folderGroups.has(key)) {
+        folderGroups.set(key, []);
+      }
+      folderGroups.get(key).push(f);
+    }
+
+    for (const [, group] of folderGroups.entries()) {
+      if (group.length > 1) {
+        const survivor = group[0];
+        const duplicates = group.slice(1);
+
+        for (const dup of duplicates) {
+          await db.run('UPDATE files SET folder_id = ? WHERE folder_id = ?', [survivor.id, dup.id]);
+          await db.run('UPDATE folders SET parent_id = ? WHERE parent_id = ?', [survivor.id, dup.id]);
+          await db.run('DELETE FROM folders WHERE id = ?', [dup.id]);
+        }
+      }
+    }
+
+    // 3. Pastikan semua berkas hasil konversi (<NamaFolder>_Hal_<N>.jpg) terhubung ke foldernya
+    const remainingFolders = await db.all('SELECT * FROM folders');
+    const validFolderIds = new Set(remainingFolders.map(f => f.id));
+    const userFolderByName = new Map();
+    for (const f of remainingFolders) {
+      userFolderByName.set(`${f.user_id}:::${f.name.trim().toLowerCase()}`, f.id);
+    }
+
+    const allFiles = await db.all('SELECT id, user_id, name, folder_id FROM files WHERE is_trash = 0');
+    for (const file of allFiles) {
+      const halMatch = file.name.match(/^(.+)_Hal_\d+\.(jpg|jpeg|png)$/i);
+      if (halMatch) {
+        const prefixName = halMatch[1].trim().toLowerCase();
+        const matchedFolderId = userFolderByName.get(`${file.user_id}:::${prefixName}`);
+        if (matchedFolderId && file.folder_id !== matchedFolderId) {
+          await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [matchedFolderId, file.id]);
+          continue;
+        }
+      }
+
+      if (!file.folder_id || !validFolderIds.has(file.folder_id)) {
+        // Coba cari berdasarkan kecocokan nama folder
+        let matched = null;
+        for (const f of remainingFolders) {
+          if (
+            f.user_id === file.user_id &&
+            !f.id.startsWith('folder-') &&
+            file.name.toLowerCase().includes(f.name.trim().toLowerCase())
+          ) {
+            matched = f.id;
+            break;
+          }
+        }
+        if (matched) {
+          await db.run('UPDATE files SET folder_id = ? WHERE id = ?', [matched, file.id]);
+        }
+      }
+    }
+  } catch (migErr) {
+    console.warn('Notice migrasi DB:', migErr.message);
+  }
+}
+
 export async function initDb() {
   const dbType = process.env.DB_TYPE || (process.env.DB_NAME || process.env.DB_USER ? 'mysql' : 'sqlite');
   const host = process.env.DB_HOST || '127.0.0.1';
@@ -104,6 +335,9 @@ export async function initDb() {
       await tempConn.end();
 
       // 2. Buat Connection Pool untuk aplikasi
+      if (pool) {
+        try { await pool.end(); } catch (e) {}
+      }
       pool = mysql.createPool({
         host,
         port,
@@ -119,6 +353,7 @@ export async function initDb() {
       // Tes koneksi pool
       await pool.query('SELECT 1');
       isMySQL = true;
+      lastMysqlError = null;
       console.log(`✅ Berhasil terhubung ke MySQL Server: ${database}`);
 
       // 3. Buat skema tabel MySQL
@@ -173,7 +408,10 @@ export async function initDb() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
 
+      // 4. Migrasi otomatis data dari SQLite lama (jika ada) ke MySQL
+      await migrateSqliteToMySQLIfNeeded();
     } catch (mysqlErr) {
+      lastMysqlError = mysqlErr.message;
       console.warn(`⚠️ Koneksi MySQL gagal (${mysqlErr.message}). Beralih otomatis ke SQLite.`);
       isMySQL = false;
     }
@@ -181,7 +419,9 @@ export async function initDb() {
 
   // Jika SQLite dipilih atau MySQL gagal terhubung:
   if (!isMySQL) {
-    sqliteDb = new Database(dbPath);
+    if (!sqliteDb) {
+      sqliteDb = new Database(dbPath);
+    }
     sqliteDb.exec(`
       PRAGMA journal_mode = WAL;
 
@@ -229,59 +469,8 @@ export async function initDb() {
     `);
   }
 
-  // Migrasi perbaikan parent_id & pembersihan duplikat
-  try {
-    if (isMySQL) {
-      await db.run("UPDATE folders SET parent_id = CONCAT('folder-conv-', user_id) WHERE parent_id = 'folder-converted' OR parent_id = 'folder-conv'");
-      await db.run("UPDATE folders SET parent_id = CONCAT('folder-scan-', user_id) WHERE parent_id = 'folder-scan'");
-      await db.run("UPDATE folders SET parent_id = CONCAT('folder-doc-', user_id) WHERE parent_id = 'folder-my-docs' OR parent_id = 'folder-doc'");
-      await db.run("UPDATE folders SET parent_id = CONCAT('folder-arc-', user_id) WHERE parent_id = 'folder-archive' OR parent_id = 'folder-arc'");
-
-      await db.run("UPDATE files SET folder_id = CONCAT('folder-conv-', user_id) WHERE folder_id = 'folder-converted' OR folder_id = 'folder-conv'");
-      await db.run("UPDATE files SET folder_id = CONCAT('folder-scan-', user_id) WHERE folder_id = 'folder-scan'");
-      await db.run("UPDATE files SET folder_id = CONCAT('folder-doc-', user_id) WHERE folder_id = 'folder-my-docs' OR folder_id = 'folder-doc'");
-      await db.run("UPDATE files SET folder_id = CONCAT('folder-arc-', user_id) WHERE folder_id = 'folder-archive' OR folder_id = 'folder-arc'");
-    } else {
-      await db.run("UPDATE folders SET parent_id = 'folder-conv-' || user_id WHERE parent_id = 'folder-converted' OR parent_id = 'folder-conv'");
-      await db.run("UPDATE folders SET parent_id = 'folder-scan-' || user_id WHERE parent_id = 'folder-scan'");
-      await db.run("UPDATE folders SET parent_id = 'folder-doc-' || user_id WHERE parent_id = 'folder-my-docs' OR parent_id = 'folder-doc'");
-      await db.run("UPDATE folders SET parent_id = 'folder-arc-' || user_id WHERE parent_id = 'folder-archive' OR parent_id = 'folder-arc'");
-
-      await db.run("UPDATE files SET folder_id = 'folder-conv-' || user_id WHERE folder_id = 'folder-converted' OR folder_id = 'folder-conv'");
-      await db.run("UPDATE files SET folder_id = 'folder-scan-' || user_id WHERE folder_id = 'folder-scan'");
-      await db.run("UPDATE files SET folder_id = 'folder-doc-' || user_id WHERE folder_id = 'folder-my-docs' OR folder_id = 'folder-doc'");
-      await db.run("UPDATE files SET folder_id = 'folder-arc-' || user_id WHERE folder_id = 'folder-archive' OR folder_id = 'folder-arc'");
-    }
-
-    // Ambil seluruh folder dan bersihkan duplikat secara presisi
-    const allFolders = await db.all('SELECT * FROM folders ORDER BY created_at ASC');
-    const folderGroups = new Map();
-
-    for (const f of allFolders) {
-      const key = `${f.user_id}:::${(f.parent_id || '').toLowerCase()}:::${f.name.trim().toLowerCase()}`;
-      if (!folderGroups.has(key)) {
-        folderGroups.set(key, []);
-      }
-      folderGroups.get(key).push(f);
-    }
-
-    for (const [key, group] of folderGroups.entries()) {
-      if (group.length > 1) {
-        // Ambil folder pertama sebagai yang bertahan
-        const survivor = group[0];
-        const duplicates = group.slice(1);
-
-        for (const dup of duplicates) {
-          // Pindahkan file & subfolder ke survivor
-          await db.run('UPDATE files SET folder_id = ? WHERE folder_id = ?', [survivor.id, dup.id]);
-          await db.run('UPDATE folders SET parent_id = ? WHERE parent_id = ?', [survivor.id, dup.id]);
-          await db.run('DELETE FROM folders WHERE id = ?', [dup.id]);
-        }
-      }
-    }
-  } catch (migErr) {
-    console.warn('Notice migrasi DB:', migErr.message);
-  }
+  // Jalankan pembersihan duplikat dan penautan ulang berkas
+  await cleanAndDeduplicateDatabase();
 
   // Buat default Administrator jika belum ada akun
   try {
@@ -303,6 +492,36 @@ export async function initDb() {
   } catch (adminErr) {
     console.warn('Notice init admin:', adminErr.message);
   }
+}
+
+// Fungsi untuk menyimpan konfigurasi MySQL ke .env & langsung menghubungkan ulang tanpa restart manual
+export async function configureAndConnectMySQL({ host, port, user, password, database }) {
+  process.env.DB_TYPE = 'mysql';
+  process.env.DB_HOST = host || '127.0.0.1';
+  process.env.DB_PORT = String(port || 3306);
+  process.env.DB_USER = user || 'root';
+  process.env.DB_PASSWORD = password || '';
+  process.env.DB_NAME = database || 'pdfku_db';
+
+  // Simpan ke file .env agar permanen saat server restart
+  const envContent = [
+    `PORT=${process.env.PORT || 3001}`,
+    `DB_TYPE=mysql`,
+    `DB_HOST=${process.env.DB_HOST}`,
+    `DB_PORT=${process.env.DB_PORT}`,
+    `DB_USER=${process.env.DB_USER}`,
+    `DB_PASSWORD=${process.env.DB_PASSWORD}`,
+    `DB_NAME=${process.env.DB_NAME}`,
+    `JWT_SECRET=${process.env.JWT_SECRET || 'pdfku-secret-key-2026-vps-secure'}`
+  ].join('\n') + '\n';
+
+  fs.writeFileSync(envPath, envContent, 'utf8');
+
+  await initDb();
+  if (!isMySQL) {
+    throw new Error(lastMysqlError || 'Gagal terhubung ke MySQL Server.');
+  }
+  return getDbConfigInfo();
 }
 
 export async function seedDefaultFolders(userId) {

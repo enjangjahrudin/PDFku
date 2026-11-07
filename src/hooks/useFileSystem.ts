@@ -213,6 +213,7 @@ export function useFileSystem() {
       const { folders: serverFolders, files: serverFiles } = await cloudFileService.fetchFiles({ view: 'all' });
 
       // Sinkronisasi folder server ke database lokal akun ini
+      const serverFolderIds = new Set(serverFolders.map(sf => sf.id));
       for (const sf of serverFolders) {
         const existing = await db.files.get(sf.id);
         const resolvedParentId = normalizeFolderId(sf.parent_id, userId);
@@ -228,9 +229,17 @@ export function useFileSystem() {
             updatedAt: new Date(sf.created_at).getTime(),
             colorTag: sf.color || '#3b82f6'
           });
-        } else if (existing.parentId !== resolvedParentId) {
-          await db.files.update(sf.id, { parentId: resolvedParentId });
+        } else if (existing.parentId !== resolvedParentId || existing.name !== sf.name) {
+          await db.files.update(sf.id, { parentId: resolvedParentId, name: sf.name });
         }
+      }
+
+      // Hapus folder lokal ber-ID server (folder_...) yang sudah dihapus di server agar tidak muncul lagi
+      const localServerFolders = await db.files
+        .filter(f => !!f.isFolder && f.id.startsWith('folder_') && !serverFolderIds.has(f.id))
+        .toArray();
+      if (localServerFolders.length > 0) {
+        await db.files.bulkDelete(localServerFolders.map(f => f.id));
       }
 
       // Bersihkan & pindahkan folder bawaan generic lama yang tidak ber-suffix
@@ -394,27 +403,30 @@ export function useFileSystem() {
     const cleanName = name.trim() || 'Folder Baru';
     const finalColor = colorTag || '#3b82f6';
 
-    // Cek apakah di database lokal sudah ada folder dengan nama dan parent yang sama
+    // Cek apakah di database lokal sudah ada folder dengan nama yang sama
     const existingLocal = await db.files
-      .filter((f) => !!f.isFolder && !f.isDeleted && f.name.trim().toLowerCase() === cleanName.toLowerCase() && normalizeFolderId(f.parentId, userId) === finalParentId)
+      .filter((f) => !!f.isFolder && !f.isDeleted && f.name.trim().toLowerCase() === cleanName.toLowerCase())
       .first();
 
-    if (existingLocal) {
-      return existingLocal;
-    }
+    let folderId = existingLocal?.id || ('folder-' + now + '-' + Math.random().toString(36).substring(2, 6));
 
-    let folderId = 'folder-' + now + '-' + Math.random().toString(36).substring(2, 6);
-
-    // Kirim ke server jika login (dapatkan ID resmi dari server)
+    // Kirim ke server jika login (dapatkan ID resmi dari server agar sinkron 100%)
     if (authService.getToken()) {
       try {
         const cloudFolder = await cloudFileService.createFolder(cleanName, finalParentId || undefined, finalColor);
         if (cloudFolder && cloudFolder.id) {
           folderId = cloudFolder.id;
+          // Jika di lokal sebelumnya ada ID sementara yang berbeda, pindahkan isinya ke ID resmi server
+          if (existingLocal && existingLocal.id !== folderId) {
+            await db.files.where('parentId').equals(existingLocal.id).modify({ parentId: folderId });
+            await db.files.delete(existingLocal.id);
+          }
         }
       } catch (err) {
         console.warn('Gagal sync folder ke VPS:', err);
       }
+    } else if (existingLocal) {
+      return existingLocal;
     }
 
     const newFolder: VirtualFile = {
@@ -424,7 +436,7 @@ export function useFileSystem() {
       type: 'folder',
       isFolder: true,
       size: 0,
-      createdAt: now,
+      createdAt: existingLocal?.createdAt || now,
       updatedAt: now,
       colorTag: finalColor
     };
@@ -499,16 +511,30 @@ export function useFileSystem() {
       return;
     }
 
-    // Cari seluruh subfolder dan file di dalamnya secara rekursif di IndexedDB
+    // Cari seluruh subfolder, duplikat bernama sama, dan file di dalamnya secara rekursif di IndexedDB
     const allItems = await db.files.toArray();
-    const folderIdsToDelete = [id];
-    let queue = [id];
+    const deletedItem = allItems.find(f => f.id === id);
+    const sameNameIds = deletedItem
+      ? allItems
+          .filter(
+            f =>
+              f.isFolder &&
+              !isSystemRootFolder(f.id) &&
+              f.name.trim().toLowerCase() === deletedItem.name.trim().toLowerCase()
+          )
+          .map(f => f.id)
+      : [];
+
+    const folderIdsToDelete = Array.from(new Set([id, ...sameNameIds]));
+    let queue = [...folderIdsToDelete];
     while (queue.length > 0) {
       const current = queue.shift()!;
       const children = allItems.filter(f => f.isFolder && f.parentId === current);
       for (const child of children) {
-        folderIdsToDelete.push(child.id);
-        queue.push(child.id);
+        if (!folderIdsToDelete.includes(child.id)) {
+          folderIdsToDelete.push(child.id);
+          queue.push(child.id);
+        }
       }
     }
 
@@ -522,7 +548,6 @@ export function useFileSystem() {
     // Hapus dari VPS Cloud jika login
     if (authService.getToken()) {
       try {
-        const deletedItem = allItems.find(f => f.id === id);
         await cloudFileService.deleteFolder(id, deletedItem?.name);
       } catch (err) {
         console.warn('Gagal menghapus folder di cloud:', err);

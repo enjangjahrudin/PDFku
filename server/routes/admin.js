@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { db, seedDefaultFolders } from '../db.js';
+import { db, seedDefaultFolders, getDbConfigInfo, configureAndConnectMySQL } from '../db.js';
 import { authenticateToken, requireAdmin } from '../middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,6 +13,31 @@ const uploadsBaseDir = path.resolve(__dirname, '../../uploads');
 const router = express.Router();
 router.use(authenticateToken);
 router.use(requireAdmin);
+
+// 0. Info & Konfigurasi Database MySQL Server
+router.get('/db-config', (req, res) => {
+  return res.json({
+    success: true,
+    config: getDbConfigInfo()
+  });
+});
+
+router.post('/db-config', async (req, res) => {
+  try {
+    const { host, port, user, password, database } = req.body;
+    const config = await configureAndConnectMySQL({ host, port, user, password, database });
+    return res.json({
+      success: true,
+      message: `Berhasil terhubung ke MySQL Server (${config.database}) dan memigrasikan data!`,
+      config
+    });
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'Gagal menghubungkan ke MySQL Server.'
+    });
+  }
+});
 
 // 1. Statistik Keseluruhan Server & Dokumen
 router.get('/stats', async (req, res) => {
