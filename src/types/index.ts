@@ -61,3 +61,51 @@ export interface ScannedPage {
   width: number;
   height: number;
 }
+
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+  name: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'suspended';
+  storage_quota: number;
+  used_storage?: number;
+  file_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ServerFile {
+  id: string;
+  user_id: number;
+  name: string;
+  type: string;
+  size: number;
+  disk_path: string;
+  thumbnail?: string | null;
+  folder_id?: string | null;
+  ocr_text?: string | null;
+  is_starred: number;
+  is_trash: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServerFolder {
+  id: string;
+  user_id: number;
+  name: string;
+  parent_id?: string | null;
+  color?: string;
+  created_at: string;
+}
+
+export interface ServerStats {
+  totalUsers: number;
+  activeUsers: number;
+  totalFiles: number;
+  totalStorageBytes: number;
+  typeBreakdown: { category: string; count: number; bytes: number }[];
+  serverTime: string;
+}

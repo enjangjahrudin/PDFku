@@ -12,6 +12,8 @@ import { ConverterModal } from './components/converter/ConverterModal';
 import { CompressorModal } from './components/tools/CompressorModal';
 import { PdfToolsModal } from './components/tools/PdfToolsModal';
 import { PreviewModal } from './components/preview/PreviewModal';
+import { AuthModal } from './components/auth/AuthModal';
+import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { MoveDialog } from './components/explorer/MoveDialog';
 import { useFileSystem } from './hooks/useFileSystem';
 import { VirtualFile } from './types';
@@ -529,6 +531,12 @@ export function App() {
         file={previewFile}
         onClose={() => setPreviewFile(null)}
       />
+
+      {/* Autentikasi Pengguna & Login Modal */}
+      <AuthModal />
+
+      {/* Dashboard Administrator & Manajemen Pengguna */}
+      <AdminDashboardModal />
     </div>
   );
 }

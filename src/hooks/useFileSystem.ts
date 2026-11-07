@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { VirtualFile, FolderNode } from '../types';
 import { db, initializeDefaultFolders } from '../services/db';
+import { authService } from '../services/authService';
+import { cloudFileService } from '../services/cloudFileService';
 
 export function useFileSystem() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>('folder-scan');
@@ -16,14 +18,6 @@ export function useFileSystem() {
   // History navigasi back / forward
   const [history, setHistory] = useState<(string | null)[]>(['folder-scan']);
   const [historyIndex, setHistoryIndex] = useState(0);
-
-  // Inisialisasi awal
-  useEffect(() => {
-    (async () => {
-      await initializeDefaultFolders();
-      await refreshAll();
-    })();
-  }, []);
 
   // Muat folder tree
   const loadFolderTree = useCallback(async () => {
@@ -114,18 +108,72 @@ export function useFileSystem() {
     await loadCurrentFiles();
   }, [loadFolderTree, loadCurrentFiles]);
 
+  // Sinkronisasi data dari VPS Cloud jika pengguna sedang login
+  const syncWithCloud = useCallback(async () => {
+    if (!authService.getToken()) return;
+    try {
+      const { folders: serverFolders, files: serverFiles } = await cloudFileService.fetchFiles({ view: 'all' });
+
+      for (const sf of serverFolders) {
+        const existing = await db.files.get(sf.id);
+        if (!existing) {
+          await db.files.add({
+            id: sf.id,
+            name: sf.name,
+            parentId: sf.parent_id || null,
+            type: 'folder',
+            isFolder: true,
+            size: 0,
+            createdAt: new Date(sf.created_at).getTime(),
+            updatedAt: new Date(sf.created_at).getTime(),
+            colorTag: sf.color || '#3b82f6'
+          });
+        }
+      }
+
+      for (const sf of serverFiles) {
+        const existing = await db.files.get(sf.id);
+        if (!existing) {
+          await db.files.add({
+            id: sf.id,
+            name: sf.name,
+            parentId: sf.folder_id || null,
+            type: sf.type.includes('pdf') ? 'pdf' : 'jpg',
+            isFolder: false,
+            size: sf.size,
+            thumbnail: sf.thumbnail || undefined,
+            ocrText: sf.ocr_text || undefined,
+            isFavorite: sf.is_starred === 1,
+            isDeleted: sf.is_trash === 1,
+            createdAt: new Date(sf.created_at).getTime(),
+            updatedAt: new Date(sf.updated_at).getTime()
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal sinkronisasi dari cloud VPS:', e);
+    }
+  }, []);
+
+  // Inisialisasi awal
+  useEffect(() => {
+    (async () => {
+      await initializeDefaultFolders();
+      await syncWithCloud();
+      await refreshAll();
+    })();
+  }, [syncWithCloud, refreshAll]);
+
   useEffect(() => {
     loadCurrentFiles();
   }, [loadCurrentFiles]);
 
-  // Navigasi ke folder
+  // Handler navigasi folder
   const navigateToFolder = (folderId: string | null) => {
-    setActiveNav('folder');
     setCurrentFolderId(folderId);
+    setActiveNav('folder');
     setSelectedIds([]);
-    setSearchQuery('');
 
-    // Tambah ke history
     const nextHistory = history.slice(0, historyIndex + 1);
     nextHistory.push(folderId);
     setHistory(nextHistory);
@@ -174,6 +222,20 @@ export function useFileSystem() {
       colorTag: colorTag || '#3b82f6'
     };
     await db.files.add(newFolder);
+
+    // Kirim ke server jika login
+    if (authService.getToken()) {
+      try {
+        const cloudFolder = await cloudFileService.createFolder(newFolder.name, finalParentId || undefined, newFolder.colorTag);
+        if (cloudFolder && cloudFolder.id) {
+          await db.files.update(newFolder.id, { id: cloudFolder.id });
+          newFolder.id = cloudFolder.id;
+        }
+      } catch (err) {
+        console.warn('Gagal sync folder ke VPS:', err);
+      }
+    }
+
     await refreshAll();
     return newFolder;
   };
@@ -189,6 +251,25 @@ export function useFileSystem() {
       updatedAt: now
     };
     await db.files.add(newFile);
+
+    // Unggah ke VPS Cloud jika sedang login
+    if (authService.getToken() && file.blob) {
+      try {
+        const uploaded = await cloudFileService.uploadFile(file.blob, {
+          name: file.name,
+          folderId: newFile.parentId || undefined,
+          ocrText: file.ocrText,
+          thumbnail: file.thumbnail
+        });
+        if (uploaded && uploaded.id) {
+          await db.files.update(newFile.id, { id: uploaded.id });
+          newFile.id = uploaded.id;
+        }
+      } catch (err) {
+        console.warn('Gagal mengunggah file ke cloud VPS:', err);
+      }
+    }
+
     await refreshAll();
     return newFile;
   };
@@ -196,6 +277,13 @@ export function useFileSystem() {
   // Ganti nama file / folder
   const renameFile = async (id: string, newName: string) => {
     await db.files.update(id, { name: newName.trim(), updatedAt: Date.now() });
+    if (authService.getToken()) {
+      try {
+        await cloudFileService.updateFile(id, { name: newName.trim() });
+      } catch (e) {
+        console.warn('Gagal rename di cloud:', e);
+      }
+    }
     await refreshAll();
   };
 
@@ -203,7 +291,13 @@ export function useFileSystem() {
   const toggleFavorite = async (id: string) => {
     const file = await db.files.get(id);
     if (file) {
-      await db.files.update(id, { isFavorite: !file.isFavorite });
+      const nextFav = !file.isFavorite;
+      await db.files.update(id, { isFavorite: nextFav });
+      if (authService.getToken()) {
+        try {
+          await cloudFileService.updateFile(id, { isStarred: nextFav });
+        } catch (e) {}
+      }
       await refreshAll();
     }
   };
@@ -217,6 +311,13 @@ export function useFileSystem() {
   // Pindahkan berkas / folder ke folder tujuan
   const moveFiles = async (ids: string[], targetFolderId: string | null) => {
     await db.files.where('id').anyOf(ids).modify({ parentId: targetFolderId, updatedAt: Date.now() });
+    if (authService.getToken()) {
+      for (const id of ids) {
+        try {
+          await cloudFileService.updateFile(id, { folderId: targetFolderId || undefined });
+        } catch (e) {}
+      }
+    }
     setSelectedIds([]);
     await refreshAll();
   };
@@ -225,8 +326,22 @@ export function useFileSystem() {
   const deleteFiles = async (ids: string[], permanent: boolean = false) => {
     if (permanent || activeNav === 'recycle_bin') {
       await db.files.bulkDelete(ids);
+      if (authService.getToken()) {
+        for (const id of ids) {
+          try {
+            await cloudFileService.deleteFilePermanently(id);
+          } catch (e) {}
+        }
+      }
     } else {
       await db.files.where('id').anyOf(ids).modify({ isDeleted: true, updatedAt: Date.now() });
+      if (authService.getToken()) {
+        for (const id of ids) {
+          try {
+            await cloudFileService.updateFile(id, { isTrash: true });
+          } catch (e) {}
+        }
+      }
     }
     setSelectedIds([]);
     await refreshAll();
@@ -235,6 +350,13 @@ export function useFileSystem() {
   // Pulihkan dari Recycle Bin
   const restoreFiles = async (ids: string[]) => {
     await db.files.where('id').anyOf(ids).modify({ isDeleted: false, updatedAt: Date.now() });
+    if (authService.getToken()) {
+      for (const id of ids) {
+        try {
+          await cloudFileService.updateFile(id, { isTrash: false });
+        } catch (e) {}
+      }
+    }
     setSelectedIds([]);
     await refreshAll();
   };
@@ -244,6 +366,11 @@ export function useFileSystem() {
     const deletedFiles = await db.files.filter(f => !!f.isDeleted).toArray();
     const ids = deletedFiles.map(f => f.id);
     await db.files.bulkDelete(ids);
+    if (authService.getToken()) {
+      try {
+        await cloudFileService.emptyTrash();
+      } catch (e) {}
+    }
     await refreshAll();
   };
 
@@ -279,6 +406,7 @@ export function useFileSystem() {
     deleteFiles,
     restoreFiles,
     emptyRecycleBin,
-    refreshAll
+    refreshAll,
+    syncWithCloud
   };
 }

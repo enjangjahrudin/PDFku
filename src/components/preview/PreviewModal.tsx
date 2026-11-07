@@ -18,6 +18,7 @@ import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 import { VirtualFile } from '../../types';
 import { downloadBlob, formatFileSize, formatDate } from '../../utils/formatters';
+import { authService } from '../../services/authService';
 
 interface PreviewModalProps {
   file: VirtualFile | null;
@@ -42,15 +43,39 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
   useEffect(() => {
     if (!file) return;
 
-    if (file.type === 'pdf' && file.blob) {
-      loadPdf(file.blob);
-    } else if (file.blob) {
-      const url = URL.createObjectURL(file.blob);
-      setImgUrl(url);
-      return () => URL.revokeObjectURL(url);
-    } else if (file.thumbnail) {
-      setImgUrl(file.thumbnail);
-    }
+    let active = true;
+    const initPreview = async () => {
+      let blob = file.blob;
+      if (!blob && file.id && !file.isFolder) {
+        try {
+          const res = await fetch(`/api/files/preview/${file.id}`, {
+            headers: authService.getAuthHeader()
+          });
+          if (res.ok) {
+            blob = await res.blob();
+          }
+        } catch (e) {
+          console.warn('Gagal fetch preview blob:', e);
+        }
+      }
+
+      if (!active) return;
+
+      if (file.type === 'pdf' && blob) {
+        loadPdf(blob);
+      } else if (blob) {
+        const url = URL.createObjectURL(blob);
+        setImgUrl(url);
+      } else if (file.thumbnail) {
+        setImgUrl(file.thumbnail);
+      }
+    };
+
+    initPreview();
+
+    return () => {
+      active = false;
+    };
   }, [file]);
 
   const loadPdf = async (blob: Blob) => {
@@ -160,15 +185,19 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
               </div>
             )}
 
-            {file.blob && (
-              <button
-                onClick={() => downloadBlob(file.blob!, file.name)}
-                className="flex items-center space-x-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-medium transition shadow-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Unduh</span>
-              </button>
-            )}
+            <button
+              onClick={() => {
+                if (file.blob) {
+                  downloadBlob(file.blob, file.name);
+                } else if (file.id) {
+                  window.open(`/api/files/download/${file.id}`, '_blank');
+                }
+              }}
+              className="flex items-center space-x-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-medium transition shadow-xs"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Unduh</span>
+            </button>
 
             <button
               onClick={onClose}

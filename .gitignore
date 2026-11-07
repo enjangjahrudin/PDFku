@@ -31,6 +31,14 @@ pnpm-debug.log*
 *.sln
 *.sw?
 
+# SQLite Database and User Uploads on VPS
+data/
+uploads/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
 # Temporary and agent files
 .gemini
 scratch
