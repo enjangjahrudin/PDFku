@@ -35,11 +35,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen = false,
   onMobileClose
 }) => {
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
-    'folder-scan': true,
-    'folder-converted': true,
-    'folder-my-docs': true
-  });
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+
+  React.useEffect(() => {
+    if (folderTree.length > 0) {
+      setExpandedFolders((prev) => {
+        const next = { ...prev };
+        folderTree.forEach((f) => {
+          if (next[f.id] === undefined) {
+            next[f.id] = true;
+          }
+        });
+        return next;
+      });
+    }
+  }, [folderTree]);
 
   const toggleExpand = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();

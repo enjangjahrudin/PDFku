@@ -71,6 +71,23 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
   `);
 
+  // Migrasi otomatis perbaikan parent_id folder & folder_id berkas agar rapi di bawah folder bawaan user
+  try {
+    db.exec(`
+      UPDATE folders SET parent_id = 'folder-conv-' || user_id WHERE parent_id = 'folder-converted';
+      UPDATE folders SET parent_id = 'folder-scan-' || user_id WHERE parent_id = 'folder-scan';
+      UPDATE folders SET parent_id = 'folder-doc-' || user_id WHERE parent_id = 'folder-my-docs';
+      UPDATE folders SET parent_id = 'folder-arc-' || user_id WHERE parent_id = 'folder-archive';
+
+      UPDATE files SET folder_id = 'folder-conv-' || user_id WHERE folder_id = 'folder-converted';
+      UPDATE files SET folder_id = 'folder-scan-' || user_id WHERE folder_id = 'folder-scan';
+      UPDATE files SET folder_id = 'folder-doc-' || user_id WHERE folder_id = 'folder-my-docs';
+      UPDATE files SET folder_id = 'folder-arc-' || user_id WHERE folder_id = 'folder-archive';
+    `);
+  } catch (err) {
+    console.warn('Notice migrasi DB:', err);
+  }
+
   // Buat default Administrator jika belum ada akun di database
   const countUsers = db.prepare('SELECT COUNT(*) as count FROM users').get();
   if (countUsers.count === 0) {

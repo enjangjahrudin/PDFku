@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { VirtualFile, FolderNode } from '../types';
-import { getDatabaseForUser, initializeUserDefaultFolders } from '../services/db';
+import { getDatabaseForUser, initializeUserDefaultFolders, normalizeFolderId } from '../services/db';
 import { authService } from '../services/authService';
 import { cloudFileService } from '../services/cloudFileService';
 import { useAuth } from '../context/AuthContext';
@@ -12,7 +12,7 @@ export function useFileSystem() {
   // Database IndexedDB terisolasi 100% per akun
   const db = useMemo(() => getDatabaseForUser(userId), [userId]);
 
-  const defaultFolderId = userId ? `folder-scan-${userId}` : 'folder-scan';
+  const defaultFolderId = normalizeFolderId('folder-scan', userId) || 'folder-scan';
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(defaultFolderId);
   const [files, setFiles] = useState<VirtualFile[]>([]);
@@ -31,21 +31,22 @@ export function useFileSystem() {
   // Muat folder tree
   const loadFolderTree = useCallback(async () => {
     const allFiles = await db.files.toArray();
-    const activeFolders = allFiles.filter(f => !!f.isFolder && !f.isDeleted);
+    const activeFolders = allFiles.filter((f) => !!f.isFolder && !f.isDeleted);
 
     const map = new Map<string, FolderNode>();
-    activeFolders.forEach(f => {
+    activeFolders.forEach((f) => {
+      const resolvedParentId = normalizeFolderId(f.parentId, userId);
       map.set(f.id, {
         id: f.id,
         name: f.name,
-        parentId: f.parentId,
+        parentId: resolvedParentId,
         colorTag: f.colorTag,
         children: []
       });
     });
 
     const rootNodes: FolderNode[] = [];
-    map.forEach(node => {
+    map.forEach((node) => {
       if (node.parentId && map.has(node.parentId)) {
         map.get(node.parentId)!.children!.push(node);
       } else {
@@ -54,7 +55,7 @@ export function useFileSystem() {
     });
 
     setFolderTree(rootNodes);
-  }, [db]);
+  }, [db, userId]);
 
   // Muat files berdasarkan navigasi aktif
   const loadCurrentFiles = useCallback(async () => {
@@ -62,32 +63,34 @@ export function useFileSystem() {
 
     if (activeNav === 'recent') {
       result = await db.files
-        .filter(f => !f.isDeleted && !f.isFolder)
+        .filter((f) => !f.isDeleted && !f.isFolder)
         .reverse()
         .sortBy('updatedAt');
       result = result.slice(0, 30);
     } else if (activeNav === 'favorites') {
       result = await db.files
-        .filter(f => !f.isDeleted && !!f.isFavorite)
+        .filter((f) => !f.isDeleted && !!f.isFavorite)
         .toArray();
     } else if (activeNav === 'recycle_bin') {
       result = await db.files
-        .filter(f => !!f.isDeleted)
+        .filter((f) => !!f.isDeleted)
         .toArray();
     } else {
-      // Navigasi folder biasa
+      // Navigasi folder biasa dengan normalisasi folder target
+      const targetFolder = normalizeFolderId(currentFolderId, userId);
       result = await db.files
-        .filter(f => f.parentId === currentFolderId && !f.isDeleted)
+        .filter((f) => normalizeFolderId(f.parentId, userId) === targetFolder && !f.isDeleted)
         .toArray();
     }
 
     // Filter berdasarkan query pencarian jika ada
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(f =>
-        f.name.toLowerCase().includes(q) ||
-        (f.tags && f.tags.some(t => t.toLowerCase().includes(q))) ||
-        (f.ocrText && f.ocrText.toLowerCase().includes(q))
+      result = result.filter(
+        (f) =>
+          f.name.toLowerCase().includes(q) ||
+          (f.tags && f.tags.some((t) => t.toLowerCase().includes(q))) ||
+          (f.ocrText && f.ocrText.toLowerCase().includes(q))
       );
     }
 
@@ -109,7 +112,7 @@ export function useFileSystem() {
     });
 
     setFiles(result);
-  }, [db, activeNav, currentFolderId, searchQuery, sortBy, sortOrder]);
+  }, [db, userId, activeNav, currentFolderId, searchQuery, sortBy, sortOrder]);
 
   const refreshAll = useCallback(async () => {
     await loadFolderTree();
@@ -125,11 +128,12 @@ export function useFileSystem() {
       // Sinkronisasi folder server ke database lokal akun ini
       for (const sf of serverFolders) {
         const existing = await db.files.get(sf.id);
+        const resolvedParentId = normalizeFolderId(sf.parent_id, userId);
         if (!existing) {
           await db.files.add({
             id: sf.id,
             name: sf.name,
-            parentId: sf.parent_id || null,
+            parentId: resolvedParentId,
             type: 'folder',
             isFolder: true,
             size: 0,
@@ -137,17 +141,32 @@ export function useFileSystem() {
             updatedAt: new Date(sf.created_at).getTime(),
             colorTag: sf.color || '#3b82f6'
           });
+        } else if (existing.parentId !== resolvedParentId) {
+          await db.files.update(sf.id, { parentId: resolvedParentId });
+        }
+      }
+
+      // Bersihkan & pindahkan folder bawaan generic lama yang tidak ber-suffix
+      const genericFolders = ['folder-scan', 'folder-converted', 'folder-my-docs', 'folder-archive'];
+      for (const gid of genericFolders) {
+        const target = normalizeFolderId(gid, userId);
+        if (target && target !== gid) {
+          // Pindahkan sub-folder dan berkas yang mengarah ke generic ID
+          await db.files.where('parentId').equals(gid).modify({ parentId: target });
+          // Hapus generic folder agar tidak duplikat di sidebar
+          await db.files.delete(gid);
         }
       }
 
       // Sinkronisasi file server ke database lokal akun ini
       for (const sf of serverFiles) {
         const existing = await db.files.get(sf.id);
+        const resolvedFolderId = normalizeFolderId(sf.folder_id, userId);
         if (!existing) {
           await db.files.add({
             id: sf.id,
             name: sf.name,
-            parentId: sf.folder_id || null,
+            parentId: resolvedFolderId,
             type: sf.type.includes('pdf') ? 'pdf' : 'jpg',
             isFolder: false,
             size: sf.size,
@@ -158,6 +177,8 @@ export function useFileSystem() {
             createdAt: new Date(sf.created_at).getTime(),
             updatedAt: new Date(sf.updated_at).getTime()
           });
+        } else if (existing.parentId !== resolvedFolderId) {
+          await db.files.update(sf.id, { parentId: resolvedFolderId });
         }
       }
     } catch (e) {
@@ -167,7 +188,7 @@ export function useFileSystem() {
 
   // Ketika akun user berubah (login / ganti akun), inisialisasi ulang storage
   useEffect(() => {
-    const initialFolder = userId ? `folder-scan-${userId}` : 'folder-scan';
+    const initialFolder = normalizeFolderId('folder-scan', userId) || 'folder-scan';
     setCurrentFolderId(initialFolder);
     setHistory([initialFolder]);
     setHistoryIndex(0);
@@ -186,12 +207,13 @@ export function useFileSystem() {
 
   // Handler navigasi folder
   const navigateToFolder = (folderId: string | null) => {
-    setCurrentFolderId(folderId);
+    const resolvedId = normalizeFolderId(folderId, userId);
+    setCurrentFolderId(resolvedId);
     setActiveNav('folder');
     setSelectedIds([]);
 
     const nextHistory = history.slice(0, historyIndex + 1);
-    nextHistory.push(folderId);
+    nextHistory.push(resolvedId);
     setHistory(nextHistory);
     setHistoryIndex(nextHistory.length - 1);
   };
@@ -225,7 +247,9 @@ export function useFileSystem() {
   // Buat folder baru
   const createFolder = async (name: string, targetParentId?: string | null, colorTag?: string): Promise<VirtualFile> => {
     const now = Date.now();
-    const finalParentId = targetParentId !== undefined ? targetParentId : currentFolderId;
+    const rawParentId = targetParentId !== undefined ? targetParentId : currentFolderId;
+    const finalParentId = normalizeFolderId(rawParentId, userId);
+
     const newFolder: VirtualFile = {
       id: 'folder-' + now + '-' + Math.random().toString(36).substring(2, 6),
       name: name.trim() || 'Folder Baru',
@@ -259,10 +283,13 @@ export function useFileSystem() {
   // Tambah file baru (dari scan atau converter)
   const addFile = async (file: Omit<VirtualFile, 'id' | 'createdAt' | 'updatedAt'>) => {
     const now = Date.now();
+    const rawParentId = file.parentId !== undefined ? file.parentId : currentFolderId;
+    const finalParentId = normalizeFolderId(rawParentId, userId);
+
     const newFile: VirtualFile = {
       ...file,
       id: 'file-' + now + '-' + Math.random().toString(36).substring(2, 6),
-      parentId: file.parentId !== undefined ? file.parentId : currentFolderId,
+      parentId: finalParentId,
       createdAt: now,
       updatedAt: now
     };
@@ -273,7 +300,7 @@ export function useFileSystem() {
       try {
         const uploaded = await cloudFileService.uploadFile(file.blob, {
           name: file.name,
-          folderId: newFile.parentId || undefined,
+          folderId: finalParentId || undefined,
           ocrText: file.ocrText,
           thumbnail: file.thumbnail
         });
@@ -326,11 +353,12 @@ export function useFileSystem() {
 
   // Pindahkan berkas / folder ke folder tujuan
   const moveFiles = async (ids: string[], targetFolderId: string | null) => {
-    await db.files.where('id').anyOf(ids).modify({ parentId: targetFolderId, updatedAt: Date.now() });
+    const finalTargetId = normalizeFolderId(targetFolderId, userId);
+    await db.files.where('id').anyOf(ids).modify({ parentId: finalTargetId, updatedAt: Date.now() });
     if (authService.getToken()) {
       for (const id of ids) {
         try {
-          await cloudFileService.updateFile(id, { folderId: targetFolderId || undefined });
+          await cloudFileService.updateFile(id, { folderId: finalTargetId || undefined });
         } catch (e) {}
       }
     }
@@ -379,8 +407,8 @@ export function useFileSystem() {
 
   // Kosongkan Recycle Bin
   const emptyRecycleBin = async () => {
-    const deletedFiles = await db.files.filter(f => !!f.isDeleted).toArray();
-    const ids = deletedFiles.map(f => f.id);
+    const deletedFiles = await db.files.filter((f) => !!f.isDeleted).toArray();
+    const ids = deletedFiles.map((f) => f.id);
     await db.files.bulkDelete(ids);
     if (authService.getToken()) {
       try {

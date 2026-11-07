@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Scan, FileText, Sparkles, HardDrive, Cloud, Shield, User, LogOut, ChevronDown, Lock } from 'lucide-react';
+import { Scan, FileText, Sparkles, HardDrive, Cloud, Shield, User, LogOut, ChevronDown, Lock, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { formatBytes } from '../../utils/formatters';
 
@@ -16,7 +16,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onOpenCompressor,
   onOpenPdfTools
 }) => {
-  const { user, isAuthenticated, isAdmin, logout, setIsAuthModalOpen, setIsAdminModalOpen } = useAuth();
+  const { user, isAuthenticated, isAdmin, logout, setIsAuthModalOpen, setIsAdminModalOpen, refreshUser } = useAuth();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   return (
@@ -138,6 +138,18 @@ export const TitleBar: React.FC<TitleBarProps> = ({
                     <span>Dashboard Admin & Pengguna</span>
                   </button>
                 )}
+
+                <button
+                  onClick={async () => {
+                    setShowUserDropdown(false);
+                    await refreshUser();
+                    window.location.reload();
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center space-x-2 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700"
+                >
+                  <RefreshCw className="w-4 h-4 text-blue-600" />
+                  <span>Sinkronkan Ulang Dokumen</span>
+                </button>
 
                 <button
                   onClick={() => {

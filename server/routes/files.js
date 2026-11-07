@@ -34,6 +34,16 @@ const upload = multer({
 const router = express.Router();
 router.use(authenticateToken);
 
+// Normalisasi ID folder bawaan agar selalu presisi ke akun user
+function resolveUserFolderId(folderId, userId) {
+  if (!folderId) return null;
+  if (folderId === 'folder-scan' || folderId === `folder-scan-${userId}`) return `folder-scan-${userId}`;
+  if (folderId === 'folder-converted' || folderId === 'folder-conv' || folderId === `folder-conv-${userId}`) return `folder-conv-${userId}`;
+  if (folderId === 'folder-my-docs' || folderId === 'folder-doc' || folderId === `folder-doc-${userId}`) return `folder-doc-${userId}`;
+  if (folderId === 'folder-archive' || folderId === 'folder-arc' || folderId === `folder-arc-${userId}`) return `folder-arc-${userId}`;
+  return folderId;
+}
+
 // 1. Ambil daftar folder dan file milik user aktif
 router.get('/', (req, res) => {
   try {
@@ -63,7 +73,7 @@ router.get('/', (req, res) => {
         params.push(term, term);
       } else if (folderId) {
         filesQuery += ' AND folder_id = ?';
-        params.push(folderId);
+        params.push(resolveUserFolderId(folderId, userId));
       }
     }
 
@@ -126,6 +136,8 @@ router.post('/upload', upload.single('file'), (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
     `);
 
+    const targetFolderId = resolveUserFolderId(folderId, userId);
+
     insert.run(
       fileId,
       userId,
@@ -134,7 +146,7 @@ router.post('/upload', upload.single('file'), (req, res) => {
       fileSize,
       relativeDiskPath,
       thumbnail || null,
-      folderId || null,
+      targetFolderId || null,
       ocrText || null,
       now,
       now
@@ -165,11 +177,13 @@ router.post('/folder', (req, res) => {
     const folderId = 'folder_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
 
+    const targetParentId = resolveUserFolderId(parentId, userId);
+
     const insert = db.prepare(`
       INSERT INTO folders (id, user_id, name, parent_id, color, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    insert.run(folderId, userId, name.trim(), parentId || null, color || '#3b82f6', now);
+    insert.run(folderId, userId, name.trim(), targetParentId || null, color || '#3b82f6', now);
 
     const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId);
     return res.status(201).json({ success: true, folder });
@@ -199,7 +213,7 @@ router.put('/:id', (req, res) => {
     }
     if (folderId !== undefined) {
       updates.push('folder_id = ?');
-      params.push(folderId);
+      params.push(resolveUserFolderId(folderId, userId));
     }
     if (isStarred !== undefined) {
       updates.push('is_starred = ?');
