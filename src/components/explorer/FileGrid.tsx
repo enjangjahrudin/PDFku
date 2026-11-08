@@ -7,7 +7,8 @@ import {
   Download,
   Trash2,
   Eye,
-  Check
+  Check,
+  Upload
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { formatFileSize, formatDate } from '../../utils/formatters';
@@ -20,6 +21,7 @@ interface FileGridProps {
   onOpen: (file: VirtualFile) => void;
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
   onToggleFavorite: (id: string) => void;
+  onUploadFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -29,16 +31,35 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onSelect,
   onOpen,
   onContextMenu,
-  onToggleFavorite
+  onToggleFavorite,
+  onUploadFile
 }) => {
   if (files.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-gray-400 select-none">
-        <Folder className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
-        <p className="text-sm font-medium text-gray-500">Folder ini kosong</p>
-        <p className="text-xs text-gray-400 mt-1">
-          Gunakan tombol "Scan Dokumen" atau "Upload Berkas" di menu atas
+      <div className="flex flex-col items-center justify-center min-h-[300px] text-gray-400 select-none p-6">
+        <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center mb-3 shadow-xs">
+          <Folder className="w-8 h-8 text-amber-500 stroke-1.5" />
+        </div>
+        <p className="text-sm font-semibold text-gray-700">Folder ini masih kosong</p>
+        <p className="text-xs text-gray-400 mt-1 max-w-sm text-center">
+          Tarik dan lepaskan berkas ke sini, atau klik tombol di bawah untuk mengunggah dokumen
         </p>
+
+        {onUploadFile && (
+          <div className="flex items-center space-x-2.5 mt-4">
+            <label className="flex items-center space-x-1.5 px-3 py-1.5 text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition font-medium cursor-pointer shadow-xs">
+              <Upload className="w-3.5 h-3.5 text-blue-600" />
+              <span>Pilih & Upload Berkas</span>
+              <input
+                type="file"
+                multiple
+                accept=".pdf,image/*"
+                onChange={onUploadFile}
+                className="hidden"
+              />
+            </label>
+          </div>
+        )}
       </div>
     );
   }

@@ -85,7 +85,8 @@ export const cloudFileService = {
 
   async uploadFileChunked(
     fileBlob: Blob,
-    metadata: { name: string; folderId?: string; ocrText?: string; thumbnail?: string }
+    metadata: { name: string; folderId?: string; ocrText?: string; thumbnail?: string },
+    onProgress?: (percent: number) => void
   ): Promise<ServerFile> {
     const CHUNK_SIZE = 350 * 1024; // 350 KB per bagian (aman di bawah limit 1MB Nginx)
     const totalChunks = Math.max(1, Math.ceil(fileBlob.size / CHUNK_SIZE));
@@ -126,6 +127,10 @@ export const cloudFileService = {
         throw new Error(data.message || `Gagal mengunggah bagian ${chunkIndex + 1}/${totalChunks}`);
       }
       lastResult = data;
+      if (onProgress) {
+        const percent = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+        onProgress(percent);
+      }
     }
 
     return lastResult.file;
@@ -133,16 +138,18 @@ export const cloudFileService = {
 
   async uploadFile(
     fileBlob: Blob,
-    metadata: { name: string; folderId?: string; ocrText?: string; thumbnail?: string }
+    metadata: { name: string; folderId?: string; ocrText?: string; thumbnail?: string },
+    onProgress?: (percent: number) => void
   ): Promise<ServerFile> {
     const compactThumb = await compressThumbnail(metadata.thumbnail);
 
     // Jika ukuran file > 450 KB, gunakan Chunked Upload agar tidak ditolak batas 1MB Nginx
     if (fileBlob.size > 450 * 1024) {
-      return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+      return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb }, onProgress);
     }
 
     try {
+      if (onProgress) onProgress(30);
       const formData = new FormData();
       formData.append('file', fileBlob, metadata.name);
       formData.append('name', metadata.name);
@@ -157,17 +164,18 @@ export const cloudFileService = {
       });
 
       if (!res.ok) {
-        return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+        return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb }, onProgress);
       }
 
       const data = await res.json();
       if (!data.success) {
-        return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+        return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb }, onProgress);
       }
 
+      if (onProgress) onProgress(100);
       return data.file;
     } catch {
-      return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb });
+      return this.uploadFileChunked(fileBlob, { ...metadata, thumbnail: compactThumb }, onProgress);
     }
   },
 

@@ -21,11 +21,12 @@ import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { VirtualFile, FolderNode } from './types';
 import { getFileExtension } from './utils/formatters';
-import { Camera, Folder, FileText, Sparkles, Layers, Scan, Loader2 } from 'lucide-react';
+import { Camera, Folder, FileText, Sparkles, Layers, Scan, Loader2, Upload } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-import { convertJpgToPdf } from './services/pdfService';
+import { convertJpgToPdf, generatePdfThumbnail } from './services/pdfService';
 import { cloudFileService } from './services/cloudFileService';
+import { UploadProgressWidget, UploadBatchState, UploadItemProgress } from './components/explorer/UploadProgressWidget';
 
 export function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -103,6 +104,18 @@ export function App() {
     folderId: string;
     folderName: string;
   }>({ isOpen: false, folderId: '', folderName: '' });
+
+  // State indikator proses & keberhasilan upload berkas
+  const [uploadBatch, setUploadBatch] = useState<UploadBatchState>({
+    isOpen: false,
+    isMinimized: false,
+    folderName: '',
+    items: [],
+    totalFiles: 0,
+    completedFiles: 0,
+    isAllCompleted: false
+  });
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const findFolderNodeInTree = (nodes: FolderNode[], id: string): FolderNode | null => {
     for (const n of nodes) {
@@ -390,70 +403,147 @@ export function App() {
     });
   };
 
-  // Handle direct file upload via toolbar or drag & drop
+  // Queue upload berkas dengan indikator proses dan status keberhasilan
+  const processUploadQueue = async (filesToUpload: File[]) => {
+    if (!filesToUpload || filesToUpload.length === 0) return;
+
+    // Tentukan nama folder tujuan
+    let destFolderName = 'Hasil Scan';
+    if (currentFolderId) {
+      const node = findFolderNodeInTree(folderTree, currentFolderId);
+      if (node?.name) {
+        destFolderName = node.name;
+      }
+    }
+
+    const initialItems: UploadItemProgress[] = filesToUpload.map((f, idx) => ({
+      id: `up_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`,
+      name: f.name,
+      size: f.size,
+      type: f.type || 'application/octet-stream',
+      status: 'pending',
+      progressPercent: 0
+    }));
+
+    setUploadBatch({
+      isOpen: true,
+      isMinimized: false,
+      folderName: destFolderName,
+      items: initialItems,
+      totalFiles: filesToUpload.length,
+      completedFiles: 0,
+      isAllCompleted: false
+    });
+
+    let completedCount = 0;
+
+    for (let i = 0; i < filesToUpload.length; i++) {
+      const f = filesToUpload[i];
+      const itemProgress = initialItems[i];
+
+      // Update status berkas menjadi 'uploading'
+      setUploadBatch((prev) => ({
+        ...prev,
+        items: prev.items.map((it) =>
+          it.id === itemProgress.id ? { ...it, status: 'uploading', progressPercent: 15 } : it
+        )
+      }));
+
+      try {
+        const ext = getFileExtension(f.name);
+        const isPdf = ext === 'pdf' || f.type === 'application/pdf';
+        const isImg = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) || f.type.startsWith('image/');
+
+        let thumbnail: string | undefined = undefined;
+        if (isImg) {
+          thumbnail = await new Promise<string | undefined>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => resolve(undefined);
+            reader.readAsDataURL(f);
+          });
+        } else if (isPdf) {
+          thumbnail = await generatePdfThumbnail(f);
+        }
+
+        await addFile(
+          {
+            name: f.name,
+            parentId: currentFolderId,
+            type: isPdf ? 'pdf' : isImg ? 'jpg' : 'txt',
+            isFolder: false,
+            size: f.size,
+            blob: f,
+            thumbnail
+          },
+          {
+            skipRefresh: i < filesToUpload.length - 1,
+            onProgress: (percent) => {
+              setUploadBatch((prev) => ({
+                ...prev,
+                items: prev.items.map((it) =>
+                  it.id === itemProgress.id ? { ...it, progressPercent: Math.max(15, percent) } : it
+                )
+              }));
+            }
+          }
+        );
+
+        completedCount++;
+        setUploadBatch((prev) => ({
+          ...prev,
+          completedFiles: completedCount,
+          items: prev.items.map((it) =>
+            it.id === itemProgress.id ? { ...it, status: 'success', progressPercent: 100 } : it
+          )
+        }));
+      } catch (err: any) {
+        console.error('Error saat upload berkas:', err);
+        setUploadBatch((prev) => ({
+          ...prev,
+          items: prev.items.map((it) =>
+            it.id === itemProgress.id
+              ? { ...it, status: 'error', errorMessage: err?.message || 'Gagal mengunggah' }
+              : it
+          )
+        }));
+      }
+    }
+
+    setUploadBatch((prev) => ({
+      ...prev,
+      isAllCompleted: true
+    }));
+
+    await refreshAll();
+  };
+
+  // Handle direct file upload via toolbar
   const handleUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFiles = e.target.files;
-    if (!uploadedFiles) return;
-
-    for (const f of Array.from(uploadedFiles)) {
-      const ext = getFileExtension(f.name);
-      const isPdf = ext === 'pdf';
-      const isImg = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
-
-      let thumbnail: string | undefined = undefined;
-      if (isImg) {
-        thumbnail = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(f);
-        });
-      }
-
-      await addFile({
-        name: f.name,
-        parentId: currentFolderId,
-        type: isPdf ? 'pdf' : (isImg ? 'jpg' : 'txt'),
-        isFolder: false,
-        size: f.size,
-        blob: f,
-        thumbnail
-      });
-    }
+    if (!uploadedFiles || uploadedFiles.length === 0) return;
+    const fileList = Array.from(uploadedFiles);
+    e.target.value = ''; // Reset input agar berkas yang sama bisa dipilih kembali jika diinginkan
+    await processUploadQueue(fileList);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    if (!isDragOver) setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragOver(false);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    setIsDragOver(false);
     const droppedFiles = e.dataTransfer.files;
-    if (!droppedFiles) return;
-
-    for (const f of Array.from(droppedFiles)) {
-      const ext = getFileExtension(f.name);
-      const isPdf = ext === 'pdf';
-      const isImg = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
-
-      let thumbnail: string | undefined = undefined;
-      if (isImg) {
-        thumbnail = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(f);
-        });
-      }
-
-      await addFile({
-        name: f.name,
-        parentId: currentFolderId,
-        type: isPdf ? 'pdf' : (isImg ? 'jpg' : 'txt'),
-        isFolder: false,
-        size: f.size,
-        blob: f,
-        thumbnail
-      });
-    }
+    if (!droppedFiles || droppedFiles.length === 0) return;
+    const fileList = Array.from(droppedFiles);
+    await processUploadQueue(fileList);
   };
 
   const selectedFile = selectedIds.length === 1 ? files.find(f => f.id === selectedIds[0]) : null;
@@ -479,9 +569,20 @@ export function App() {
   return (
     <div
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="flex flex-col h-screen w-screen overflow-hidden bg-white select-none text-gray-800"
+      className="flex flex-col h-screen w-screen overflow-hidden bg-white select-none text-gray-800 relative"
     >
+      {/* Drop Zone Visual Indicator */}
+      {isDragOver && (
+        <div className="fixed inset-0 z-50 bg-blue-600/10 backdrop-blur-xs border-4 border-dashed border-blue-500 pointer-events-none flex flex-col items-center justify-center animate-in fade-in duration-150">
+          <div className="bg-white/95 rounded-2xl p-6 shadow-2xl flex flex-col items-center border border-blue-200">
+            <Upload className="w-12 h-12 text-blue-600 mb-2 animate-bounce" />
+            <p className="text-base font-bold text-gray-800">Lepaskan berkas untuk mengunggah</p>
+            <p className="text-xs text-gray-500 mt-1">Berkas akan otomatis disimpan ke folder aktif</p>
+          </div>
+        </div>
+      )}
       {/* 1. Window Title Bar & Fast Action Launchers */}
       <TitleBar
         onOpenScanner={() => setIsScannerOpen(true)}
@@ -610,6 +711,7 @@ export function App() {
               onOpen={handleOpenFile}
               onContextMenu={handleContextMenu}
               onToggleFavorite={toggleFavorite}
+              onUploadFile={handleUploadFiles}
             />
           ) : (
             <FileList
@@ -798,6 +900,13 @@ export function App() {
 
       {/* Dashboard Administrator & Manajemen Pengguna */}
       <AdminDashboardModal />
+
+      {/* Floating Upload Progress & Success Indicator Widget */}
+      <UploadProgressWidget
+        state={uploadBatch}
+        onToggleMinimize={() => setUploadBatch((prev) => ({ ...prev, isMinimized: !prev.isMinimized }))}
+        onClose={() => setUploadBatch((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

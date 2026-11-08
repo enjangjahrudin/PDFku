@@ -488,10 +488,10 @@ export function useFileSystem() {
     return newFolder;
   };
 
-  // Tambah file baru (dari scan atau converter)
+  // Tambah file baru (dari scan, converter, atau upload)
   const addFile = async (
     file: Omit<VirtualFile, 'id' | 'createdAt' | 'updatedAt'>,
-    options?: { skipRefresh?: boolean }
+    options?: { skipRefresh?: boolean; onProgress?: (percent: number) => void }
   ) => {
     const now = Date.now();
     const rawParentId = file.parentId !== undefined ? file.parentId : currentFolderId;
@@ -502,12 +502,16 @@ export function useFileSystem() {
     // Unggah ke VPS Cloud terlebih dahulu jika sedang login agar ID server sinkron
     if (authService.getToken() && file.blob) {
       try {
-        const uploaded = await cloudFileService.uploadFile(file.blob, {
-          name: file.name,
-          folderId: finalParentId || undefined,
-          ocrText: file.ocrText,
-          thumbnail: file.thumbnail
-        });
+        const uploaded = await cloudFileService.uploadFile(
+          file.blob,
+          {
+            name: file.name,
+            folderId: finalParentId || undefined,
+            ocrText: file.ocrText,
+            thumbnail: file.thumbnail
+          },
+          options?.onProgress
+        );
         if (uploaded && uploaded.id) {
           fileId = uploaded.id;
         }

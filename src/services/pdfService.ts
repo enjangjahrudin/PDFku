@@ -306,3 +306,31 @@ export async function compressPdf(
   const resultBytes = await compressedPdf.save();
   return new Blob([new Uint8Array(resultBytes)], { type: 'application/pdf' });
 }
+
+/**
+ * Buat pratinjau thumbnail cepat dari halaman 1 berkas PDF
+ */
+export async function generatePdfThumbnail(pdfBlob: Blob): Promise<string | undefined> {
+  try {
+    const arrayBuffer = await pdfBlob.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+    const pdfDoc = await loadingTask.promise;
+    if (pdfDoc.numPages < 1) return undefined;
+
+    const page = await pdfDoc.getPage(1);
+    const viewport = page.getViewport({ scale: 0.35 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    return canvas.toDataURL('image/jpeg', 0.6);
+  } catch {
+    return undefined;
+  }
+}
