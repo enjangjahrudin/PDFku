@@ -28,6 +28,7 @@ interface ContextMenuProps {
   onToggleFavorite: (id: string) => void;
   onSetColorTag: (id: string, color: string | undefined) => void;
   onNewFolder?: (parentId?: string | null, parentName?: string) => void;
+  onDownloadFolderZip?: (folder: VirtualFile) => void;
   onMove?: (file: VirtualFile) => void;
   onCut?: (file: VirtualFile) => void;
   onCopy?: (file: VirtualFile) => void;
@@ -49,6 +50,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onToggleFavorite,
   onSetColorTag,
   onNewFolder,
+  onDownloadFolderZip,
   onMove,
   onCut,
   onCopy,
@@ -113,6 +115,19 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <FolderPlus className="w-4 h-4 text-emerald-600" />
               <span>+ Buat Sub-folder di Sini</span>
+            </button>
+          )}
+
+          {file.isFolder && onDownloadFolderZip && (
+            <button
+              onClick={() => {
+                onClose();
+                onDownloadFolderZip(file);
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-gray-100 transition text-left"
+            >
+              <Download className="w-4 h-4 text-emerald-600" />
+              <span>Unduh Folder (.ZIP)</span>
             </button>
           )}
 

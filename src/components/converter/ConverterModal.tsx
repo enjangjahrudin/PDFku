@@ -123,11 +123,11 @@ export const ConverterModal: React.FC<ConverterModalProps> = ({
     const baseName = pdfFile.name.replace(/\.pdf$/i, '');
 
     pdfResults.forEach((item) => {
-      zip.file(`${baseName}_Halaman_${item.pageNumber}.jpg`, item.blob);
+      zip.file(`${baseName}_Hal_${item.pageNumber}.jpg`, item.blob);
     });
 
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, `${baseName}_JPG.zip`);
+    saveAs(zipBlob, `${baseName}.zip`);
   };
 
   const handleSaveJpgToExplorer = async () => {

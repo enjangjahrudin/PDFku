@@ -69,6 +69,7 @@ export function App() {
     deleteFiles,
     restoreFiles,
     emptyRecycleBin,
+    getFolderFilesRecursive,
     refreshAll
   } = useFileSystem();
 
@@ -226,26 +227,105 @@ export function App() {
     }
   };
 
-  // Download Masal (Bulk ZIP)
-  const handleBulkDownloadZip = async () => {
-    const selectedFiles = files.filter(f => selectedIds.includes(f.id) && !f.isFolder);
-    if (selectedFiles.length === 0) return;
+  // Unduh 1 Folder spesifik beserta seluruh isinya ke dalam file ZIP bernama Folder asli
+  const handleDownloadFolderZip = async (folderId: string, fallbackName?: string) => {
+    const { folderName, entries } = await getFolderFilesRecursive(folderId);
+    const finalFolderName = (fallbackName || folderName || 'Folder').trim();
+
+    if (entries.length === 0) {
+      alert(`Folder "${finalFolderName}" masih kosong.`);
+      return;
+    }
 
     const zip = new JSZip();
     let addedCount = 0;
-    for (const f of selectedFiles) {
-      const blob = f.blob || (await cloudFileService.fetchFileBlob(f.id));
+    for (const entry of entries) {
+      const blob = entry.file.blob || (await cloudFileService.fetchFileBlob(entry.file.id));
       if (blob) {
-        zip.file(f.name, blob);
+        zip.file(entry.relativePath, blob);
         addedCount++;
       }
     }
+
     if (addedCount === 0) {
       alert('Gagal mengunduh berkas dari server.');
       return;
     }
+
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, `PDFku_Unduhan_${addedCount}_Berkas.zip`);
+    saveAs(zipBlob, `${finalFolderName}.zip`);
+  };
+
+  // Download Masal (Bulk ZIP) — menggunakan nama Folder asli
+  const handleBulkDownloadZip = async () => {
+    const selectedItems = files.filter(f => selectedIds.includes(f.id));
+    if (selectedItems.length === 0) return;
+
+    // Jika yang dipilih tepat 1 folder, langsung unduh folder tersebut dengan nama aslinya
+    if (selectedItems.length === 1 && selectedItems[0].isFolder) {
+      await handleDownloadFolderZip(selectedItems[0].id, selectedItems[0].name);
+      return;
+    }
+
+    const zip = new JSZip();
+    let addedCount = 0;
+
+    for (const item of selectedItems) {
+      if (item.isFolder) {
+        const { entries } = await getFolderFilesRecursive(item.id);
+        for (const entry of entries) {
+          const blob = entry.file.blob || (await cloudFileService.fetchFileBlob(entry.file.id));
+          if (blob) {
+            zip.file(`${item.name}/${entry.relativePath}`, blob);
+            addedCount++;
+          }
+        }
+      } else {
+        const blob = item.blob || (await cloudFileService.fetchFileBlob(item.id));
+        if (blob) {
+          zip.file(item.name, blob);
+          addedCount++;
+        }
+      }
+    }
+
+    if (addedCount === 0) {
+      alert('Gagal mengunduh berkas dari server.');
+      return;
+    }
+
+    // Tentukan nama file ZIP berdasarkan nama Folder asli tempat berkas berada
+    let resolvedFolderName = '';
+    if (activeNav === 'folder' && currentFolderId) {
+      const curNode = findFolderNodeInTree(folderTree, currentFolderId);
+      if (curNode?.name) {
+        resolvedFolderName = curNode.name.trim();
+      }
+    }
+
+    if (!resolvedFolderName) {
+      const firstParentId = selectedItems[0]?.parentId;
+      if (firstParentId) {
+        const parentNode = findFolderNodeInTree(folderTree, firstParentId);
+        if (parentNode?.name) {
+          resolvedFolderName = parentNode.name.trim();
+        }
+      }
+    }
+
+    if (!resolvedFolderName) {
+      const halMatch = selectedItems[0]?.name.match(/^(.+)_Hal_\d+\./i);
+      if (halMatch) {
+        resolvedFolderName = halMatch[1].trim();
+      }
+    }
+
+    const finalZipName = resolvedFolderName
+      ? `${resolvedFolderName}.zip`
+      : `PDFku_Unduhan_${addedCount}_Berkas.zip`;
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    saveAs(zipBlob, finalZipName);
   };
 
   // Gabung Masal ke PDF (Bulk Merge)
@@ -266,7 +346,10 @@ export function App() {
         return;
       }
       const mergedPdfBlob = await convertJpgToPdf(blobs, { pageSize: 'A4', orientation: 'auto', margin: 'none' });
-      const newName = `Gabungan_${blobs.length}_Gambar.pdf`;
+
+      const curNode = currentFolderId ? findFolderNodeInTree(folderTree, currentFolderId) : null;
+      const basePdfName = curNode?.name ? curNode.name.trim() : `Gabungan_${blobs.length}_Gambar`;
+      const newName = `${basePdfName}.pdf`;
 
       await addFile({
         name: newName,
@@ -479,6 +562,7 @@ export function App() {
         activeNav={activeNav}
         onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
         onNewFolder={handleTriggerNewFolder}
+        onDownloadFolderZip={handleDownloadFolderZip}
         onRenameFolder={handleTriggerRenameFolder}
         onDeleteFolder={handleTriggerDeleteFolder}
         onMoveFolder={(id, name) => setMoveDialogState({ isOpen: true, items: [{ id, name, isFolder: true }] })}
@@ -614,6 +698,7 @@ export function App() {
           onToggleFavorite={toggleFavorite}
           onSetColorTag={setColorTag}
           onNewFolder={handleTriggerNewFolder}
+          onDownloadFolderZip={(folder) => handleDownloadFolderZip(folder.id, folder.name)}
           onMove={(file) => setMoveDialogState({ isOpen: true, items: [{ id: file.id, name: file.name, isFolder: file.isFolder }] })}
           onCut={(file) => cutItems([file.id])}
           onCopy={(file) => copyItems([file.id])}

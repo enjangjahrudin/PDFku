@@ -893,6 +893,40 @@ export function useFileSystem() {
     await refreshAll();
   };
 
+  // Ambil seluruh berkas di dalam suatu folder secara rekursif (untuk keperluan Download ZIP Folder)
+  const getFolderFilesRecursive = useCallback(
+    async (folderId: string): Promise<{ folderName: string; entries: { relativePath: string; file: VirtualFile }[] }> => {
+      const allItems = await db.files.filter((f) => !f.isDeleted).toArray();
+      const targetId = normalizeFolderId(folderId, userId) || folderId;
+      const rootFolder = allItems.find((f) => f.id === targetId || f.id === folderId);
+      const folderName = rootFolder?.name || 'Folder';
+
+      const entries: { relativePath: string; file: VirtualFile }[] = [];
+
+      const collect = (parentId: string, prefixPath: string) => {
+        const normTarget = normalizeFolderId(parentId, userId) || parentId;
+        const children = allItems.filter((item) => {
+          const itemParent = normalizeFolderId(item.parentId, userId) || item.parentId;
+          return itemParent === normTarget || item.parentId === parentId;
+        });
+
+        for (const child of children) {
+          if (child.isFolder) {
+            const subPath = prefixPath ? `${prefixPath}/${child.name}` : child.name;
+            collect(child.id, subPath);
+          } else {
+            const relPath = prefixPath ? `${prefixPath}/${child.name}` : child.name;
+            entries.push({ relativePath: relPath, file: child });
+          }
+        }
+      };
+
+      collect(targetId, '');
+      return { folderName, entries };
+    },
+    [db, userId]
+  );
+
   return {
     currentFolderId,
     files,
@@ -934,6 +968,7 @@ export function useFileSystem() {
     deleteFiles,
     restoreFiles,
     emptyRecycleBin,
+    getFolderFilesRecursive,
     refreshAll,
     syncWithCloud
   };

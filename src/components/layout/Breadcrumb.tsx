@@ -14,7 +14,8 @@ import {
   Trash2,
   CornerDownRight,
   Scissors,
-  Copy
+  Copy,
+  Download
 } from 'lucide-react';
 import { FolderNode } from '../../types';
 
@@ -33,6 +34,7 @@ interface BreadcrumbProps {
   activeNav: string;
   onOpenMobileSidebar?: () => void;
   onNewFolder?: (parentId?: string | null, parentName?: string) => void;
+  onDownloadFolderZip?: (id: string, name: string) => void;
   onRenameFolder?: (id: string, name: string) => void;
   onDeleteFolder?: (id: string, name: string) => void;
   onMoveFolder?: (id: string, name: string) => void;
@@ -55,6 +57,7 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
   activeNav,
   onOpenMobileSidebar,
   onNewFolder,
+  onDownloadFolderZip,
   onRenameFolder,
   onDeleteFolder,
   onMoveFolder,
@@ -183,6 +186,20 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
             >
               <FolderPlus className="w-3.5 h-3.5 text-emerald-600" />
               <span className="hidden sm:inline text-[11px]">+ Sub-folder</span>
+            </button>
+          )}
+
+          {onDownloadFolderZip && (
+            <button
+              onClick={() => {
+                const currentName = pathSegments[pathSegments.length - 1]?.name || 'Folder';
+                onDownloadFolderZip(currentFolderId, currentName);
+              }}
+              className="flex items-center space-x-1 px-2 py-1 text-xs text-emerald-700 hover:text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100 rounded-md border border-emerald-200 transition font-medium"
+              title="Unduh seluruh isi folder ini sebagai file ZIP dengan nama folder asli"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden md:inline text-[11px]">Download ZIP</span>
             </button>
           )}
 
