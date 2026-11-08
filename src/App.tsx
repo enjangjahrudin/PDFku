@@ -860,6 +860,7 @@ export function App() {
               onToggleFavorite={toggleFavorite}
               onUploadFile={handleUploadFiles}
               isRecycleBin={activeNav === 'recycle_bin'}
+              activeNav={activeNav}
             />
           ) : (
             <FileList
@@ -872,6 +873,7 @@ export function App() {
               onToggleFavorite={toggleFavorite}
               onSelectAll={handleToggleSelectAll}
               isRecycleBin={activeNav === 'recycle_bin'}
+              activeNav={activeNav}
             />
           )}
         </main>

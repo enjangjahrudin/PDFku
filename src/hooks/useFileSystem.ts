@@ -128,6 +128,21 @@ export function useFileSystem() {
         .sortBy('updatedAt');
       result = result.slice(0, 30);
     } else if (activeNav === 'favorites') {
+      if (authService.getToken()) {
+        try {
+          const { files: serverStarredFiles } = await cloudFileService.fetchFiles({ view: 'starred' });
+          if (serverStarredFiles) {
+            for (const sf of serverStarredFiles) {
+              const ex = await db.files.get(sf.id);
+              if (ex && !ex.isFavorite) {
+                await db.files.update(sf.id, { isFavorite: true });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Gagal sinkron favorit dari cloud:', e);
+        }
+      }
       result = await db.files
         .filter((f) => !f.isDeleted && !!f.isFavorite)
         .toArray();
@@ -481,6 +496,16 @@ export function useFileSystem() {
       return nextHistory;
     });
     setHistoryIndex((prev) => prev + 1);
+  };
+
+  // Handler navigasi Akses Cepat (Recent, Favorites, Recycle Bin, Folder)
+  const selectNav = (nav: 'folder' | 'recent' | 'favorites' | 'recycle_bin') => {
+    setActiveNav(nav);
+    setSelectedIds([]);
+    setFocusItemId(null);
+    if (nav !== 'folder') {
+      setCurrentFolderId(null);
+    }
   };
 
   const goBack = () => {
@@ -1106,7 +1131,8 @@ export function useFileSystem() {
     searchQuery,
     setSearchQuery,
     activeNav,
-    setActiveNav,
+    setActiveNav: selectNav,
+    selectNav,
     navigateToFolder,
     goBack,
     goForward,

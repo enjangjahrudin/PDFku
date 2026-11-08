@@ -7,7 +7,8 @@ import {
   Eye,
   Download,
   Trash2,
-  Check
+  Check,
+  Clock
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { formatFileSize, formatDate } from '../../utils/formatters';
@@ -22,6 +23,7 @@ interface FileListProps {
   onToggleFavorite: (id: string) => void;
   onSelectAll?: (selectAll: boolean) => void;
   isRecycleBin?: boolean;
+  activeNav?: string;
 }
 
 export const FileList: React.FC<FileListProps> = ({
@@ -33,23 +35,44 @@ export const FileList: React.FC<FileListProps> = ({
   onContextMenu,
   onToggleFavorite,
   onSelectAll,
-  isRecycleBin
+  isRecycleBin,
+  activeNav
 }) => {
   if (files.length === 0) {
+    if (activeNav === 'recycle_bin' || isRecycleBin) {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 text-gray-400 select-none">
+          <Trash2 className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
+          <p className="text-sm font-medium text-gray-500">Tempat Sampah Kosong</p>
+          <p className="text-xs text-gray-400 mt-0.5">Tidak ada berkas atau folder di dalam tempat sampah.</p>
+        </div>
+      );
+    }
+
+    if (activeNav === 'favorites') {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 text-gray-400 select-none">
+          <Star className="w-12 h-12 text-amber-500 fill-amber-500 mb-2 stroke-1" />
+          <p className="text-sm font-medium text-gray-500">Belum Ada Berkas Favorit</p>
+          <p className="text-xs text-gray-400 mt-0.5">Tandai berkas penting dengan bintang untuk menemukannya di sini.</p>
+        </div>
+      );
+    }
+
+    if (activeNav === 'recent') {
+      return (
+        <div className="flex flex-col items-center justify-center h-64 text-gray-400 select-none">
+          <Clock className="w-12 h-12 text-blue-500 mb-2 stroke-1" />
+          <p className="text-sm font-medium text-gray-500">Belum Ada Berkas Terkini</p>
+          <p className="text-xs text-gray-400 mt-0.5">Berkas yang baru dibuka atau diubah akan otomatis muncul di sini.</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center justify-center h-64 text-gray-400 select-none">
-        {isRecycleBin ? (
-          <>
-            <Trash2 className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
-            <p className="text-sm font-medium text-gray-500">Tempat Sampah Kosong</p>
-            <p className="text-xs text-gray-400 mt-0.5">Tidak ada berkas atau folder di dalam tempat sampah.</p>
-          </>
-        ) : (
-          <>
-            <Folder className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
-            <p className="text-sm font-medium text-gray-500">Folder ini kosong</p>
-          </>
-        )}
+        <Folder className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
+        <p className="text-sm font-medium text-gray-500">Folder ini kosong</p>
       </div>
     );
   }

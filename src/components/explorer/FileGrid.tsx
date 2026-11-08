@@ -8,7 +8,8 @@ import {
   Trash2,
   Eye,
   Check,
-  Upload
+  Upload,
+  Clock
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { formatFileSize, formatDate } from '../../utils/formatters';
@@ -23,6 +24,7 @@ interface FileGridProps {
   onToggleFavorite: (id: string) => void;
   onUploadFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   isRecycleBin?: boolean;
+  activeNav?: string;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -34,10 +36,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onContextMenu,
   onToggleFavorite,
   onUploadFile,
-  isRecycleBin
+  isRecycleBin,
+  activeNav
 }) => {
   if (files.length === 0) {
-    if (isRecycleBin) {
+    if (activeNav === 'recycle_bin' || isRecycleBin) {
       return (
         <div className="flex flex-col items-center justify-center min-h-[300px] text-gray-400 select-none p-6">
           <div className="w-16 h-16 rounded-2xl bg-gray-100 border border-gray-200 flex items-center justify-center mb-3 shadow-xs">
@@ -46,6 +49,34 @@ export const FileGrid: React.FC<FileGridProps> = ({
           <p className="text-sm font-semibold text-gray-700">Tempat Sampah Kosong</p>
           <p className="text-xs text-gray-400 mt-1 max-w-sm text-center">
             Tidak ada berkas atau folder yang berada di dalam tempat sampah.
+          </p>
+        </div>
+      );
+    }
+
+    if (activeNav === 'favorites') {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[300px] text-gray-400 select-none p-6">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center mb-3 shadow-xs">
+            <Star className="w-8 h-8 text-amber-500 fill-amber-500 stroke-1.5" />
+          </div>
+          <p className="text-sm font-semibold text-gray-700">Belum Ada Berkas Favorit</p>
+          <p className="text-xs text-gray-400 mt-1 max-w-sm text-center">
+            Tandai berkas penting dengan bintang untuk menemukannya dengan cepat di sini.
+          </p>
+        </div>
+      );
+    }
+
+    if (activeNav === 'recent') {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[300px] text-gray-400 select-none p-6">
+          <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center mb-3 shadow-xs">
+            <Clock className="w-8 h-8 text-blue-600 stroke-1.5" />
+          </div>
+          <p className="text-sm font-semibold text-gray-700">Belum Ada Berkas Terkini</p>
+          <p className="text-xs text-gray-400 mt-1 max-w-sm text-center">
+            Berkas yang baru Anda buka, pindai, atau ubah akan otomatis tampil di sini.
           </p>
         </div>
       );
