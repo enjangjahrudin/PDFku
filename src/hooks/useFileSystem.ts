@@ -132,6 +132,58 @@ export function useFileSystem() {
         .filter((f) => !f.isDeleted && !!f.isFavorite)
         .toArray();
     } else if (activeNav === 'recycle_bin') {
+      if (authService.getToken()) {
+        try {
+          const { folders: serverTrashedFolders, files: serverTrashedFiles } = await cloudFileService.fetchFiles({ view: 'trash' });
+          if (serverTrashedFolders) {
+            for (const tf of serverTrashedFolders) {
+              const ex = await db.files.get(tf.id);
+              if (!ex) {
+                await db.files.put({
+                  id: tf.id,
+                  name: tf.name,
+                  parentId: tf.parent_id || null,
+                  type: 'folder',
+                  isFolder: true,
+                  size: 0,
+                  colorTag: tf.color || '#3b82f6',
+                  isDeleted: true,
+                  createdAt: new Date(tf.created_at).getTime(),
+                  updatedAt: new Date(tf.created_at).getTime()
+                });
+              } else if (!ex.isDeleted) {
+                await db.files.update(tf.id, { isDeleted: true });
+              }
+            }
+          }
+          if (serverTrashedFiles) {
+            for (const tf of serverTrashedFiles) {
+              const ex = await db.files.get(tf.id);
+              if (!ex) {
+                await db.files.put({
+                  id: tf.id,
+                  name: tf.name,
+                  parentId: tf.folder_id || null,
+                  type: tf.type.includes('pdf') ? 'pdf' : 'jpg',
+                  isFolder: false,
+                  size: tf.size,
+                  thumbnail: tf.thumbnail || undefined,
+                  ocrText: tf.ocr_text || undefined,
+                  isFavorite: tf.is_starred === 1,
+                  isDeleted: true,
+                  createdAt: new Date(tf.created_at).getTime(),
+                  updatedAt: new Date(tf.updated_at).getTime()
+                });
+              } else if (!ex.isDeleted) {
+                await db.files.update(tf.id, { isDeleted: true });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Gagal sinkron Tempat Sampah dari cloud:', e);
+        }
+      }
+
       result = await db.files
         .filter((f) => !!f.isDeleted)
         .toArray();
@@ -251,6 +303,7 @@ export function useFileSystem() {
       for (const sf of serverFolders) {
         const existing = await db.files.get(sf.id);
         const resolvedParentId = normalizeFolderId(sf.parent_id, userId);
+        const isTrashedFolder = (sf as any).is_trash === 1;
         if (!existing) {
           await db.files.put({
             id: sf.id,
@@ -261,18 +314,18 @@ export function useFileSystem() {
             size: 0,
             createdAt: new Date(sf.created_at).getTime(),
             updatedAt: new Date(sf.created_at).getTime(),
-            colorTag: sf.color || '#3b82f6'
+            colorTag: sf.color || '#3b82f6',
+            isDeleted: isTrashedFolder
           });
-        } else if (
-          existing.parentId !== resolvedParentId ||
-          existing.name !== sf.name ||
-          existing.colorTag !== (sf.color || existing.colorTag)
-        ) {
-          await db.files.update(sf.id, {
-            parentId: resolvedParentId,
-            name: sf.name,
-            colorTag: sf.color || existing.colorTag
-          });
+        } else {
+          const updates: Partial<VirtualFile> = {};
+          if (existing.parentId !== resolvedParentId) updates.parentId = resolvedParentId;
+          if (existing.name !== sf.name) updates.name = sf.name;
+          if (sf.color && existing.colorTag !== sf.color) updates.colorTag = sf.color;
+          if (existing.isDeleted !== isTrashedFolder) updates.isDeleted = isTrashedFolder;
+          if (Object.keys(updates).length > 0) {
+            await db.files.update(sf.id, updates);
+          }
         }
       }
 
@@ -600,12 +653,14 @@ export function useFileSystem() {
     await refreshAll();
   };
 
-  // Hapus folder beserta isinya
-  const deleteFolder = async (id: string) => {
+  // Hapus folder beserta isinya (Soft delete ke Tempat Sampah, atau permanen jika di Recycle Bin)
+  const deleteFolder = async (id: string, permanent: boolean = false) => {
     if (isSystemRootFolder(id)) {
       alert('Folder sistem bawaan tidak dapat dihapus.');
       return;
     }
+
+    const isPermanent = permanent || activeNav === 'recycle_bin';
 
     // Cari seluruh subfolder, duplikat bernama sama pada induk yang sama, dan file di dalamnya secara rekursif di IndexedDB
     const allItems = await db.files.toArray();
@@ -640,15 +695,31 @@ export function useFileSystem() {
       .filter(f => !f.isFolder && f.parentId && folderIdsToDelete.includes(f.parentId))
       .map(f => f.id);
 
-    // Hapus dari IndexedDB
-    await db.files.bulkDelete([...folderIdsToDelete, ...fileIdsToDelete]);
+    const allItemIds = [...folderIdsToDelete, ...fileIdsToDelete];
 
-    // Hapus dari VPS Cloud jika login
-    if (authService.getToken()) {
-      try {
-        await cloudFileService.deleteFolder(id, deletedItem?.name);
-      } catch (err) {
-        console.warn('Gagal menghapus folder di cloud:', err);
+    if (isPermanent) {
+      // Hapus permanen dari IndexedDB
+      await db.files.bulkDelete(allItemIds);
+
+      // Hapus permanen dari VPS Cloud jika login
+      if (authService.getToken()) {
+        try {
+          await cloudFileService.deleteFolder(id, deletedItem?.name, true);
+        } catch (err) {
+          console.warn('Gagal menghapus folder permanen di cloud:', err);
+        }
+      }
+    } else {
+      // Pindahkan ke Tempat Sampah (isDeleted = true)
+      await db.files.where('id').anyOf(allItemIds).modify({ isDeleted: true, updatedAt: Date.now() });
+
+      // Pindahkan ke Tempat Sampah di VPS Cloud jika login
+      if (authService.getToken()) {
+        try {
+          await cloudFileService.updateFolder(id, { isTrash: true });
+        } catch (err) {
+          console.warn('Gagal memindahkan folder ke tempat sampah di cloud:', err);
+        }
       }
     }
 
@@ -658,7 +729,7 @@ export function useFileSystem() {
       setCurrentFolderId(parentTarget || null);
     }
 
-    setSelectedIds(prev => prev.filter(selectedId => !folderIdsToDelete.includes(selectedId) && !fileIdsToDelete.includes(selectedId)));
+    setSelectedIds(prev => prev.filter(selectedId => !allItemIds.includes(selectedId)));
     await refreshAll();
   };
 
@@ -878,19 +949,25 @@ export function useFileSystem() {
 
   // Pindahkan ke Recycle Bin (soft delete) atau Hapus permanen
   const deleteFiles = async (ids: string[], permanent: boolean = false) => {
+    const isPermanent = permanent || activeNav === 'recycle_bin';
+    const folderIds: string[] = [];
     const regularFileIds: string[] = [];
 
     for (const id of ids) {
       const item = await db.files.get(id);
       if (item && item.isFolder) {
-        await deleteFolder(id);
+        folderIds.push(id);
       } else {
         regularFileIds.push(id);
       }
     }
 
+    for (const fId of folderIds) {
+      await deleteFolder(fId, isPermanent);
+    }
+
     if (regularFileIds.length > 0) {
-      if (permanent || activeNav === 'recycle_bin') {
+      if (isPermanent) {
         await db.files.bulkDelete(regularFileIds);
         if (authService.getToken()) {
           for (const id of regularFileIds) {
@@ -917,11 +994,42 @@ export function useFileSystem() {
 
   // Pulihkan dari Recycle Bin
   const restoreFiles = async (ids: string[]) => {
-    await db.files.where('id').anyOf(ids).modify({ isDeleted: false, updatedAt: Date.now() });
+    const allItems = await db.files.where('id').anyOf(ids).toArray();
+    const folderIdsToRestore: string[] = [];
+
+    for (const item of allItems) {
+      if (item.isFolder) {
+        folderIdsToRestore.push(item.id);
+      }
+    }
+
+    // Jika memulihkan folder, pulihkan juga semua subfolder dan berkas di dalamnya
+    const allFiles = await db.files.toArray();
+    let queue = [...folderIdsToRestore];
+    const relatedItemIds: string[] = [...folderIdsToRestore];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      const children = allFiles.filter(f => f.parentId === cur);
+      for (const ch of children) {
+        if (!relatedItemIds.includes(ch.id)) {
+          relatedItemIds.push(ch.id);
+          if (ch.isFolder) queue.push(ch.id);
+        }
+      }
+    }
+
+    const totalIdsToRestore = Array.from(new Set([...ids, ...relatedItemIds]));
+    await db.files.where('id').anyOf(totalIdsToRestore).modify({ isDeleted: false, updatedAt: Date.now() });
+
     if (authService.getToken()) {
-      for (const id of ids) {
+      for (const id of totalIdsToRestore) {
         try {
-          await cloudFileService.updateFile(id, { isTrash: false });
+          const it = allFiles.find(f => f.id === id);
+          if (it?.isFolder) {
+            await cloudFileService.updateFolder(id, { isTrash: false });
+          } else {
+            await cloudFileService.updateFile(id, { isTrash: false });
+          }
         } catch (e) {}
       }
     }
@@ -931,14 +1039,19 @@ export function useFileSystem() {
 
   // Kosongkan Recycle Bin
   const emptyRecycleBin = async () => {
-    const deletedFiles = await db.files.filter((f) => !!f.isDeleted).toArray();
-    const ids = deletedFiles.map((f) => f.id);
-    await db.files.bulkDelete(ids);
+    const deletedItems = await db.files.filter((f) => !!f.isDeleted).toArray();
+    const ids = deletedItems.map((f) => f.id);
+    if (ids.length > 0) {
+      await db.files.bulkDelete(ids);
+    }
     if (authService.getToken()) {
       try {
         await cloudFileService.emptyTrash();
-      } catch (e) {}
+      } catch (err) {
+        console.warn('Gagal mengosongkan tempat sampah di cloud:', err);
+      }
     }
+    setSelectedIds([]);
     await refreshAll();
   };
 

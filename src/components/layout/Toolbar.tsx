@@ -296,15 +296,35 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             <button
               disabled={selectedCount === 0}
               onClick={onRestoreSelected}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 rounded-md transition font-medium border border-emerald-200"
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-md transition font-medium border ${
+                selectedCount > 0
+                  ? 'text-emerald-700 hover:bg-emerald-50 border-emerald-200'
+                  : 'text-gray-400 border-gray-200 cursor-not-allowed'
+              }`}
+              title="Pulihkan berkas / folder terpilih kembali ke lokasi aslinya"
             >
               <RotateCcw className="w-4 h-4 text-emerald-600" />
               <span>Pulihkan Berkas ({selectedCount})</span>
             </button>
 
             <button
+              disabled={selectedCount === 0}
+              onClick={onDeleteSelected}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-md transition font-medium border ${
+                selectedCount > 0
+                  ? 'text-red-700 hover:bg-red-50 border-red-200'
+                  : 'text-gray-400 border-gray-200 cursor-not-allowed'
+              }`}
+              title="Hapus berkas / folder terpilih secara permanen"
+            >
+              <Trash2 className="w-4 h-4 text-red-600" />
+              <span>Hapus Permanen ({selectedCount})</span>
+            </button>
+
+            <button
               onClick={onEmptyRecycleBin}
               className="flex items-center space-x-1.5 px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-50 rounded-md transition font-medium border border-red-200"
+              title="Kosongkan seluruh tempat sampah secara permanen"
             >
               <Trash2 className="w-4 h-4 text-red-600" />
               <span>Kosongkan Tempat Sampah</span>

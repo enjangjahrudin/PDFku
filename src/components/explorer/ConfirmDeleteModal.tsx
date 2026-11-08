@@ -7,6 +7,7 @@ interface ConfirmDeleteModalProps {
   itemName?: string;
   itemType?: 'folder' | 'file';
   message?: string;
+  isPermanent?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -17,6 +18,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   itemName,
   itemType = 'folder',
   message,
+  isPermanent = false,
   onConfirm,
   onClose
 }) => {
@@ -32,7 +34,11 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
             </div>
             <div>
               <h4 className="text-sm font-semibold text-gray-800">{title}</h4>
-              <p className="text-[11px] text-gray-500">Tindakan ini tidak dapat dibatalkan</p>
+              <p className="text-[11px] text-gray-500">
+                {isPermanent
+                  ? 'Tindakan ini permanen & tidak dapat dibatalkan'
+                  : 'Akan dipindahkan ke Tempat Sampah'}
+              </p>
             </div>
           </div>
           <button
@@ -51,8 +57,10 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
               Apakah Anda yakin ingin menghapus {itemType === 'folder' ? 'folder' : 'berkas'}{' '}
               <strong className="text-gray-800 font-semibold break-all">"{itemName}"</strong>?
               {itemType === 'folder' && (
-                <span className="block mt-1 text-red-600 font-medium">
-                  Seluruh dokumen dan file di dalam folder ini juga akan ikut terhapus.
+                <span className="block mt-1 text-amber-700 font-medium">
+                  {isPermanent
+                    ? 'Seluruh dokumen dan berkas di dalam folder ini akan dihapus secara permanen.'
+                    : 'Seluruh dokumen dan berkas di dalam folder ini juga akan ikut masuk ke Tempat Sampah.'}
                 </span>
               )}
             </p>
@@ -76,7 +84,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
             className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium shadow-sm transition flex items-center justify-center space-x-1"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>Ya, Hapus</span>
+            <span>{isPermanent ? 'Hapus Permanen' : 'Pindahkan ke Sampah'}</span>
           </button>
         </div>
       </div>

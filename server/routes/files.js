@@ -57,15 +57,24 @@ router.get('/', async (req, res) => {
 
     // Pastikan 4 folder sistem bawaan selalu ada untuk user ini
     await seedDefaultFolders(userId);
-    let folders = await db.all('SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC', [userId]);
+    let foldersQuery = 'SELECT * FROM folders WHERE user_id = ?';
+    if (view === 'trash') {
+      foldersQuery += ' AND is_trash = 1';
+    } else if (view !== 'all') {
+      foldersQuery += ' AND (is_trash = 0 OR is_trash IS NULL)';
+    }
+    foldersQuery += ' ORDER BY name ASC';
+    let folders = await db.all(foldersQuery, [userId]);
 
     let filesQuery = 'SELECT * FROM files WHERE user_id = ?';
     const params = [userId];
 
     if (view === 'trash') {
       filesQuery += ' AND is_trash = 1';
+    } else if (view === 'all') {
+      // view === 'all' digunakan sinkronisasi: sertakan semua berkas (termasuk is_trash = 1)
     } else {
-      filesQuery += ' AND is_trash = 0';
+      filesQuery += ' AND (is_trash = 0 OR is_trash IS NULL)';
 
       if (view === 'starred') {
         filesQuery += ' AND is_starred = 1';
@@ -372,7 +381,7 @@ router.put('/folder/:id', async (req, res) => {
   try {
     const folderId = req.params.id;
     const userId = req.user.id;
-    const { name, color, parentId } = req.body;
+    const { name, color, parentId, isTrash } = req.body;
 
     const systemRoots = [
       `folder-scan-${userId}`, `folder-conv-${userId}`, `folder-doc-${userId}`, `folder-arc-${userId}`,
@@ -420,10 +429,34 @@ router.put('/folder/:id', async (req, res) => {
       updates.push('parent_id = ?');
       params.push(resolveUserFolderId(parentId, userId));
     }
+    if (isTrash !== undefined) {
+      updates.push('is_trash = ?');
+      params.push(isTrash ? 1 : 0);
+    }
 
     if (updates.length > 0) {
       params.push(actualId, userId);
       await db.run(`UPDATE folders SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
+    }
+
+    // Jika folder dipindahkan ke tong sampah / dipulihkan, ubah juga seluruh subfolder dan file di dalamnya
+    if (isTrash !== undefined) {
+      const trashVal = isTrash ? 1 : 0;
+      let queue = [actualId];
+      const allSubIds = [actualId];
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        const subs = await db.all('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?', [cur, userId]);
+        for (const s of subs) {
+          if (!allSubIds.includes(s.id)) {
+            allSubIds.push(s.id);
+            queue.push(s.id);
+          }
+        }
+      }
+      const placeholders = allSubIds.map(() => '?').join(',');
+      await db.run(`UPDATE folders SET is_trash = ? WHERE id IN (${placeholders}) AND user_id = ?`, [trashVal, ...allSubIds, userId]);
+      await db.run(`UPDATE files SET is_trash = ? WHERE folder_id IN (${placeholders}) AND user_id = ?`, [trashVal, ...allSubIds, userId]);
     }
 
     const updated = await db.get('SELECT * FROM folders WHERE id = ?', [actualId]);
@@ -494,8 +527,17 @@ router.delete('/folder/:id', async (req, res) => {
       }
     }
 
-    // Cari dan hapus semua file fisik di disk yang berada di dalam folder-folder ini
+    const isPermanent = req.query.permanent === 'true';
     const placeholders = folderIdsToDelete.map(() => '?').join(',');
+
+    if (!isPermanent) {
+      // Soft delete: Pindahkan folder dan seluruh isinya ke tempat sampah (is_trash = 1)
+      await db.run(`UPDATE folders SET is_trash = 1 WHERE id IN (${placeholders}) AND user_id = ?`, [...folderIdsToDelete, userId]);
+      await db.run(`UPDATE files SET is_trash = 1 WHERE folder_id IN (${placeholders}) AND user_id = ?`, [...folderIdsToDelete, userId]);
+      return res.json({ success: true, message: 'Folder dan seluruh isinya dipindahkan ke tempat sampah.' });
+    }
+
+    // Cari dan hapus semua file fisik di disk yang berada di dalam folder-folder ini
     const filesToDelete = await db.all(`SELECT * FROM files WHERE folder_id IN (${placeholders}) AND user_id = ?`, [...folderIdsToDelete, userId]);
 
     for (const f of filesToDelete) {
@@ -624,6 +666,7 @@ router.delete('/trash/empty', async (req, res) => {
     }
 
     await db.run('DELETE FROM files WHERE user_id = ? AND is_trash = 1', [userId]);
+    await db.run('DELETE FROM folders WHERE user_id = ? AND is_trash = 1', [userId]);
     return res.json({ success: true, message: 'Tempat sampah berhasil dikosongkan.' });
   } catch (err) {
     console.error('Error empty trash:', err);

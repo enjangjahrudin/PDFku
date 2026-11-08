@@ -22,6 +22,7 @@ interface FileGridProps {
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
   onToggleFavorite: (id: string) => void;
   onUploadFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  isRecycleBin?: boolean;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -32,9 +33,24 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onOpen,
   onContextMenu,
   onToggleFavorite,
-  onUploadFile
+  onUploadFile,
+  isRecycleBin
 }) => {
   if (files.length === 0) {
+    if (isRecycleBin) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[300px] text-gray-400 select-none p-6">
+          <div className="w-16 h-16 rounded-2xl bg-gray-100 border border-gray-200 flex items-center justify-center mb-3 shadow-xs">
+            <Trash2 className="w-8 h-8 text-gray-400 stroke-1.5" />
+          </div>
+          <p className="text-sm font-semibold text-gray-700">Tempat Sampah Kosong</p>
+          <p className="text-xs text-gray-400 mt-1 max-w-sm text-center">
+            Tidak ada berkas atau folder yang berada di dalam tempat sampah.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px] text-gray-400 select-none p-6">
         <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center mb-3 shadow-xs">

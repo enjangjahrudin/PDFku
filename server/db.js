@@ -382,11 +382,19 @@ export async function initDb() {
           name VARCHAR(255) NOT NULL,
           parent_id VARCHAR(64) NULL,
           color VARCHAR(20) DEFAULT '#3b82f6',
+          is_trash TINYINT DEFAULT 0,
           created_at VARCHAR(64) NOT NULL,
           INDEX idx_folders_user (user_id),
           INDEX idx_folders_parent (parent_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
+
+      // Tambahkan kolom is_trash pada folders jika belum ada (migrasi aman)
+      try {
+        await pool.query('ALTER TABLE folders ADD COLUMN is_trash TINYINT DEFAULT 0');
+      } catch (e) {
+        // Kolom sudah ada
+      }
 
       await pool.query(`
         CREATE TABLE IF NOT EXISTS files (
@@ -445,6 +453,7 @@ export async function initDb() {
         name TEXT NOT NULL,
         parent_id TEXT,
         color TEXT DEFAULT '#3b82f6',
+        is_trash INTEGER DEFAULT 0,
         created_at TEXT NOT NULL
       );
 
@@ -468,6 +477,12 @@ export async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
       CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
     `);
+
+    try {
+      sqliteDb.exec('ALTER TABLE folders ADD COLUMN is_trash INTEGER DEFAULT 0');
+    } catch (e) {
+      // Kolom sudah ada
+    }
   }
 
   // Jalankan pembersihan duplikat dan penautan ulang berkas

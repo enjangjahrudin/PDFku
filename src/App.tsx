@@ -859,6 +859,7 @@ export function App() {
               onContextMenu={handleContextMenu}
               onToggleFavorite={toggleFavorite}
               onUploadFile={handleUploadFiles}
+              isRecycleBin={activeNav === 'recycle_bin'}
             />
           ) : (
             <FileList
@@ -870,6 +871,7 @@ export function App() {
               onContextMenu={handleContextMenu}
               onToggleFavorite={toggleFavorite}
               onSelectAll={handleToggleSelectAll}
+              isRecycleBin={activeNav === 'recycle_bin'}
             />
           )}
         </main>
@@ -1022,13 +1024,14 @@ export function App() {
       {/* Confirm Delete Folder Modal */}
       <ConfirmDeleteModal
         isOpen={deleteFolderModal.isOpen}
-        title="Hapus Folder"
+        title={activeNav === 'recycle_bin' ? 'Hapus Folder Permanen' : 'Pindahkan Folder ke Tempat Sampah'}
         itemName={deleteFolderModal.folderName}
         itemType="folder"
+        isPermanent={activeNav === 'recycle_bin'}
         onClose={() => setDeleteFolderModal({ isOpen: false, folderId: '', folderName: '' })}
         onConfirm={() => {
           if (deleteFolderModal.folderId) {
-            deleteFolder(deleteFolderModal.folderId);
+            deleteFolder(deleteFolderModal.folderId, activeNav === 'recycle_bin');
           }
         }}
       />

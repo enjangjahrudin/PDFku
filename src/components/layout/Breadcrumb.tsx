@@ -173,7 +173,7 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({
       </div>
 
       {/* Action buttons saat berada di dalam folder tertentu */}
-      {currentFolderId && (
+      {currentFolderId && activeNav === 'folder' && (
         <div className="flex items-center space-x-1 shrink-0">
           {onNewFolder && (
             <button

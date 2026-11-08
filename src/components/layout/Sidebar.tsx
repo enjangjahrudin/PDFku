@@ -143,6 +143,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleNavClick = (nav: 'recent' | 'favorites' | 'recycle_bin') => {
     setActiveNav(nav);
+    onNavigate(null);
     if (onMobileClose) onMobileClose();
   };
 

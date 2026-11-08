@@ -233,8 +233,32 @@ export const cloudFileService = {
     return data.folder;
   },
 
-  async deleteFolder(id: string, name?: string): Promise<void> {
-    const query = name ? `?name=${encodeURIComponent(name)}` : '';
+  async updateFolder(
+    id: string,
+    updates: { name?: string; color?: string; parentId?: string | null; isTrash?: boolean }
+  ): Promise<ServerFolder> {
+    const res = await fetch(`/api/files/folder/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authService.getAuthHeader()
+      },
+      body: JSON.stringify(updates)
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || 'Gagal memperbarui folder.');
+    }
+
+    return data.folder;
+  },
+
+  async deleteFolder(id: string, name?: string, permanent: boolean = false): Promise<void> {
+    const params = new URLSearchParams();
+    if (name) params.set('name', name);
+    if (permanent) params.set('permanent', 'true');
+    const query = params.toString() ? `?${params.toString()}` : '';
     const res = await fetch(`/api/files/folder/${encodeURIComponent(id)}${query}`, {
       method: 'DELETE',
       headers: authService.getAuthHeader()

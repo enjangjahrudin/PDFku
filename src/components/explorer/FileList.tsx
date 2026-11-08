@@ -21,6 +21,7 @@ interface FileListProps {
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
   onToggleFavorite: (id: string) => void;
   onSelectAll?: (selectAll: boolean) => void;
+  isRecycleBin?: boolean;
 }
 
 export const FileList: React.FC<FileListProps> = ({
@@ -31,13 +32,24 @@ export const FileList: React.FC<FileListProps> = ({
   onOpen,
   onContextMenu,
   onToggleFavorite,
-  onSelectAll
+  onSelectAll,
+  isRecycleBin
 }) => {
   if (files.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-gray-400 select-none">
-        <Folder className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
-        <p className="text-sm font-medium text-gray-500">Folder ini kosong</p>
+        {isRecycleBin ? (
+          <>
+            <Trash2 className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
+            <p className="text-sm font-medium text-gray-500">Tempat Sampah Kosong</p>
+            <p className="text-xs text-gray-400 mt-0.5">Tidak ada berkas atau folder di dalam tempat sampah.</p>
+          </>
+        ) : (
+          <>
+            <Folder className="w-12 h-12 text-gray-300 mb-2 stroke-1" />
+            <p className="text-sm font-medium text-gray-500">Folder ini kosong</p>
+          </>
+        )}
       </div>
     );
   }
