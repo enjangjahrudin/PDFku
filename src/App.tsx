@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { Toolbar } from './components/layout/Toolbar';
 import { Breadcrumb } from './components/layout/Breadcrumb';
@@ -36,6 +36,8 @@ export function App() {
     folderTree,
     selectedIds,
     setSelectedIds,
+    focusItemId,
+    setFocusItemId,
     viewMode,
     setViewMode,
     sortBy,
@@ -73,6 +75,17 @@ export function App() {
     getFolderFilesRecursive,
     refreshAll
   } = useFileSystem();
+
+  // Scroll cache & reference untuk mempertahankan posisi folder
+  const mainContentRef = useRef<HTMLElement>(null);
+  const folderScrollPosMap = useRef<Map<string, number>>(new Map());
+
+  // Simpan posisi scroll saat pengguna scrolling di area explorer
+  const handleMainScroll = (e: React.UIEvent<HTMLElement>) => {
+    if (currentFolderId && activeNav === 'folder') {
+      folderScrollPosMap.current.set(currentFolderId, e.currentTarget.scrollTop);
+    }
+  };
 
   // Modals state
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -211,6 +224,31 @@ export function App() {
           e.preventDefault();
           pasteItems();
         }
+      } else if (e.altKey && e.key === 'ArrowUp') {
+        e.preventDefault();
+        goUp();
+      } else if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        goBack();
+      } else if (e.altKey && e.key === 'ArrowRight') {
+        e.preventDefault();
+        goForward();
+      } else if (
+        e.key === 'Backspace' &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
+        e.preventDefault();
+        goBack();
+      } else if (
+        e.key === 'Enter' &&
+        selectedIds.length === 1 &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
+        const targetItem = files.find((f) => f.id === selectedIds[0]);
+        if (targetItem) {
+          e.preventDefault();
+          handleOpenFile(targetItem);
+        }
       } else if (e.key === 'Escape') {
         setSelectedIds([]);
         setContextMenu(null);
@@ -220,7 +258,43 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds, files, activeNav, deleteFiles, folderDialogState, isScannerOpen, isConverterOpen, isCompressorOpen, isPdfToolsOpen, previewFile, copyItems, cutItems, pasteItems, clearClipboard, clipboard]);
+  }, [selectedIds, files, activeNav, deleteFiles, folderDialogState, isScannerOpen, isConverterOpen, isCompressorOpen, isPdfToolsOpen, previewFile, copyItems, cutItems, pasteItems, clearClipboard, clipboard, goUp, goBack, goForward]);
+
+  // Efek memulihkan posisi scroll dan memfokuskan folder terakhir saat kembali ke folder atasnya (Back / Up)
+  useEffect(() => {
+    const mainEl = mainContentRef.current;
+    if (!mainEl) return;
+
+    if (focusItemId) {
+      // 1. Pulihkan posisi scroll folder yang tersimpan sebelumnya
+      const savedScroll = currentFolderId ? folderScrollPosMap.current.get(currentFolderId) : undefined;
+      if (savedScroll !== undefined) {
+        mainEl.scrollTop = savedScroll;
+      }
+
+      // 2. Pastikan elemen folder target benar-benar masuk ke viewport dan tersorot
+      const timer = setTimeout(() => {
+        const itemEl =
+          document.getElementById(`file-item-${focusItemId}`) ||
+          document.querySelector(`[data-file-id="${focusItemId}"]`);
+
+        if (itemEl) {
+          itemEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+        setFocusItemId(null);
+      }, 70);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Jika bernavigasi ke folder yang pernah dikunjungi, pulihkan posisi scrollnya
+      if (currentFolderId && folderScrollPosMap.current.has(currentFolderId)) {
+        const savedScroll = folderScrollPosMap.current.get(currentFolderId) || 0;
+        mainEl.scrollTop = savedScroll;
+      } else if (activeNav === 'folder') {
+        mainEl.scrollTop = 0;
+      }
+    }
+  }, [currentFolderId, files, focusItemId, setFocusItemId, activeNav]);
 
   // Handle seleksi berkas
   const handleSelectFile = (id: string, multi: boolean) => {
@@ -651,7 +725,13 @@ export function App() {
       <Breadcrumb
         currentFolderId={currentFolderId}
         folderTree={folderTree}
-        onNavigate={navigateToFolder}
+        onNavigate={(targetId) => {
+          if (currentFolderId && targetId !== currentFolderId) {
+            navigateToFolder(targetId, currentFolderId);
+          } else {
+            navigateToFolder(targetId);
+          }
+        }}
         canGoBack={canGoBack}
         canGoForward={canGoForward}
         canGoUp={canGoUp}
@@ -695,6 +775,8 @@ export function App() {
 
         {/* Center / Right Content Area */}
         <main
+          ref={mainContentRef}
+          onScroll={handleMainScroll}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               setSelectedIds([]);

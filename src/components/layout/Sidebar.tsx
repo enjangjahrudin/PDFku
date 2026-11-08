@@ -117,6 +117,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [folderTree]);
 
+  // Otomatis scroll item folder yang aktif ke tampilan sidebar
+  React.useEffect(() => {
+    if (currentFolderId && activeNav === 'folder') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`sidebar-folder-${currentFolderId}`);
+        if (el) {
+          el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [currentFolderId, activeNav]);
+
   const toggleExpand = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedFolders(prev => ({ ...prev, [id]: !prev[id] }));
@@ -142,6 +155,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return (
       <div key={node.id} className="select-none">
         <div
+          id={`sidebar-folder-${node.id}`}
           onClick={() => handleFolderClick(node.id)}
           onContextMenu={(e) => {
             e.preventDefault();

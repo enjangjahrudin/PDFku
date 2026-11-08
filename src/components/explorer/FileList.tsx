@@ -84,6 +84,8 @@ export const FileList: React.FC<FileListProps> = ({
             return (
               <tr
                 key={file.id}
+                id={`file-item-${file.id}`}
+                data-file-id={file.id}
                 onClick={(e) => onSelect(file.id, e.ctrlKey || e.metaKey)}
                 onDoubleClick={() => onOpen(file)}
                 onContextMenu={(e) => onContextMenu(e, file)}
@@ -91,7 +93,7 @@ export const FileList: React.FC<FileListProps> = ({
                   isCut ? 'opacity-40 italic' : ''
                 } ${
                   isSelected
-                    ? 'bg-blue-50/90 text-blue-900 font-medium'
+                    ? 'bg-blue-50/95 text-blue-900 font-medium ring-1 ring-inset ring-blue-400 shadow-2xs'
                     : 'hover:bg-gray-100/70 text-gray-700'
                 }`}
               >

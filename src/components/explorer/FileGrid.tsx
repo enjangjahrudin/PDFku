@@ -73,6 +73,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
         return (
           <div
             key={file.id}
+            id={`file-item-${file.id}`}
+            data-file-id={file.id}
             onClick={(e) => onSelect(file.id, e.ctrlKey || e.metaKey)}
             onDoubleClick={() => onOpen(file)}
             onContextMenu={(e) => onContextMenu(e, file)}
@@ -80,7 +82,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               isCut ? 'opacity-40 border-dashed border-orange-400' : ''
             } ${
               isSelected
-                ? 'bg-blue-50/80 border-blue-400 ring-1 ring-blue-400 shadow-xs'
+                ? 'bg-blue-50/90 border-blue-500 ring-2 ring-blue-500/70 shadow-sm'
                 : 'bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300'
             }`}
           >

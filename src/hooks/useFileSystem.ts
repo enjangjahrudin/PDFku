@@ -40,6 +40,7 @@ export function useFileSystem() {
   const [files, setFiles] = useState<VirtualFile[]>([]);
   const [folderTree, setFolderTree] = useState<FolderNode[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'details'>('grid');
   const [sortBy, setSortBy] = useState<'name' | 'updatedAt' | 'size' | 'type'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -191,7 +192,17 @@ export function useFileSystem() {
     });
 
     setFiles(result);
-  }, [db, userId, activeNav, currentFolderId, searchQuery, sortBy, sortOrder]);
+
+    // Jika sedang dalam mode kembali ke folder induk, otomatis pertahankan seleksi pada folder asal
+    if (focusItemId) {
+      const match = result.find(
+        (f) => f.id === focusItemId || normalizeFolderId(f.id, userId) === normalizeFolderId(focusItemId, userId)
+      );
+      if (match) {
+        setSelectedIds([match.id]);
+      }
+    }
+  }, [db, userId, activeNav, currentFolderId, searchQuery, sortBy, sortOrder, focusItemId]);
 
   const refreshAll = useCallback(async () => {
     await loadFolderTree();
@@ -397,11 +408,19 @@ export function useFileSystem() {
   }, [loadCurrentFiles]);
 
   // Handler navigasi folder
-  const navigateToFolder = (folderId: string | null) => {
+  const navigateToFolder = (folderId: string | null, targetFocusId?: string | null) => {
     const resolvedId = normalizeFolderId(folderId, userId);
+
+    if (targetFocusId !== undefined && targetFocusId !== null) {
+      setFocusItemId(targetFocusId);
+      setSelectedIds([targetFocusId]);
+    } else {
+      setFocusItemId(null);
+      setSelectedIds([]);
+    }
+
     setCurrentFolderId(resolvedId);
     setActiveNav('folder');
-    setSelectedIds([]);
 
     setHistory((prev) => {
       const nextHistory = prev.slice(0, historyIndex + 1);
@@ -414,6 +433,11 @@ export function useFileSystem() {
   const goBack = () => {
     if (historyIndex > 0) {
       const prevId = history[historyIndex - 1];
+      const leavingId = currentFolderId;
+      if (leavingId) {
+        setFocusItemId(leavingId);
+        setSelectedIds([leavingId]);
+      }
       setHistoryIndex(historyIndex - 1);
       setCurrentFolderId(prevId);
       setActiveNav('folder');
@@ -426,15 +450,36 @@ export function useFileSystem() {
       setHistoryIndex(historyIndex + 1);
       setCurrentFolderId(nextId);
       setActiveNav('folder');
+      setFocusItemId(null);
     }
   };
 
   const goUp = async () => {
     if (!currentFolderId) return;
+    const leavingId = currentFolderId;
+    let parentTarget: string | null = null;
+
     const current = await db.files.get(currentFolderId);
     if (current && current.parentId !== undefined) {
-      navigateToFolder(current.parentId);
+      parentTarget = normalizeFolderId(current.parentId, userId);
+    } else {
+      // Cari parent di hierarki folderTree jika tidak ditemukan di db.files
+      const findParentInTree = (nodes: FolderNode[], id: string, pId: string | null = null): string | null => {
+        for (const n of nodes) {
+          if (n.id === id) return pId;
+          if (n.children && n.children.length > 0) {
+            const found = findParentInTree(n.children, id, n.id);
+            if (found !== null) return found;
+          }
+        }
+        return null;
+      };
+      parentTarget = findParentInTree(folderTree, currentFolderId);
     }
+
+    setFocusItemId(leavingId);
+    setSelectedIds([leavingId]);
+    navigateToFolder(parentTarget, leavingId);
   };
 
   // Buat folder baru
@@ -937,6 +982,8 @@ export function useFileSystem() {
     folderTree,
     selectedIds,
     setSelectedIds,
+    focusItemId,
+    setFocusItemId,
     viewMode,
     setViewMode,
     sortBy,
