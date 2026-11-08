@@ -17,7 +17,9 @@ import {
   Layers,
   Scissors,
   Copy,
-  ClipboardPaste
+  ClipboardPaste,
+  Image as ImageIcon,
+  FileText
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -39,6 +41,10 @@ interface ToolbarProps {
   clipboardAction?: 'copy' | 'cut' | null;
   onBulkDownloadZip?: () => void;
   onBulkMergePdf?: () => void;
+  hasSelectedPdf?: boolean;
+  hasSelectedImages?: boolean;
+  onDirectConvertPdfToJpg?: () => void;
+  onDirectConvertJpgToPdf?: () => void;
   viewMode: 'grid' | 'details';
   onToggleViewMode: (mode: 'grid' | 'details') => void;
   sortBy: 'name' | 'updatedAt' | 'size' | 'type';
@@ -69,6 +75,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   clipboardAction,
   onBulkDownloadZip,
   onBulkMergePdf,
+  hasSelectedPdf = false,
+  hasSelectedImages = false,
+  onDirectConvertPdfToJpg,
+  onDirectConvertJpgToPdf,
   viewMode,
   onToggleViewMode,
   sortBy,
@@ -242,6 +252,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               >
                 <Layers className="w-3.5 h-3.5 text-indigo-600" />
                 <span>Gabung ke PDF</span>
+              </button>
+            )}
+
+            {onDirectConvertPdfToJpg && hasSelectedPdf && selectedCount > 0 && (
+              <button
+                onClick={onDirectConvertPdfToJpg}
+                className="flex items-center space-x-1 px-2 py-1.5 text-xs text-emerald-700 bg-emerald-50/70 hover:bg-emerald-100 rounded-md transition font-medium border border-emerald-200"
+                title="Konversi berkas PDF terpilih menjadi gambar JPG langsung di folder ini"
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Konversi ke JPG</span>
+              </button>
+            )}
+
+            {onDirectConvertJpgToPdf && hasSelectedImages && selectedCount > 0 && (
+              <button
+                onClick={onDirectConvertJpgToPdf}
+                className="flex items-center space-x-1 px-2 py-1.5 text-xs text-blue-700 bg-blue-50/70 hover:bg-blue-100 rounded-md transition font-medium border border-blue-200"
+                title="Konversi berkas gambar terpilih menjadi dokumen PDF langsung di folder ini"
+              >
+                <FileText className="w-3.5 h-3.5 text-blue-600" />
+                <span>Konversi ke PDF</span>
               </button>
             )}
 

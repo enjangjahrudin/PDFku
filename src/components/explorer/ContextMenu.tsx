@@ -11,7 +11,9 @@ import {
   Scissors,
   Copy,
   ClipboardPaste,
-  FolderPlus
+  FolderPlus,
+  Image as ImageIcon,
+  FileText
 } from 'lucide-react';
 import { VirtualFile } from '../../types';
 import { downloadBlob } from '../../utils/formatters';
@@ -37,6 +39,7 @@ interface ContextMenuProps {
   clipboardCount?: number;
   isRecycleBin?: boolean;
   onRestore?: (file: VirtualFile) => void;
+  onDirectConvert?: (type: 'pdf-to-jpg' | 'jpg-to-pdf', file: VirtualFile) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -58,7 +61,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   canPaste,
   clipboardCount,
   isRecycleBin,
-  onRestore
+  onRestore,
+  onDirectConvert
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -150,6 +154,36 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             >
               <Download className="w-4 h-4 text-emerald-600" />
               <span>Unduh Berkas</span>
+            </button>
+          )}
+
+          {!file.isFolder && onDirectConvert && (file.type === 'pdf' || file.name.toLowerCase().endsWith('.pdf')) && (
+            <button
+              onClick={() => {
+                onClose();
+                onDirectConvert('pdf-to-jpg', file);
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-emerald-50 text-emerald-700 transition text-left font-medium"
+            >
+              <ImageIcon className="w-4 h-4 text-emerald-600" />
+              <span>Konversi ke JPG...</span>
+            </button>
+          )}
+
+          {!file.isFolder && onDirectConvert && (
+            file.type === 'jpg' ||
+            file.type === 'png' ||
+            /\.(jpe?g|png|webp)$/i.test(file.name)
+          ) && (
+            <button
+              onClick={() => {
+                onClose();
+                onDirectConvert('jpg-to-pdf', file);
+              }}
+              className="w-full px-3 py-1.5 flex items-center space-x-2.5 hover:bg-blue-50 text-blue-700 transition text-left font-medium"
+            >
+              <FileText className="w-4 h-4 text-blue-600" />
+              <span>Konversi ke PDF...</span>
             </button>
           )}
 

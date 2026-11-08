@@ -9,6 +9,7 @@ import { ContextMenu } from './components/explorer/ContextMenu';
 import { FolderDialog } from './components/explorer/FolderDialog';
 import { ScannerModal } from './components/scanner/ScannerModal';
 import { ConverterModal } from './components/converter/ConverterModal';
+import { DirectConvertModal } from './components/converter/DirectConvertModal';
 import { CompressorModal } from './components/tools/CompressorModal';
 import { PdfToolsModal } from './components/tools/PdfToolsModal';
 import { PreviewModal } from './components/preview/PreviewModal';
@@ -130,6 +131,17 @@ export function App() {
   });
   const [isDragOver, setIsDragOver] = useState(false);
 
+  // State modal konversi langsung di File Explorer
+  const [directConvertState, setDirectConvertState] = useState<{
+    isOpen: boolean;
+    type: 'pdf-to-jpg' | 'jpg-to-pdf';
+    targetFiles: VirtualFile[];
+  }>({
+    isOpen: false,
+    type: 'pdf-to-jpg',
+    targetFiles: []
+  });
+
   const findFolderNodeInTree = (nodes: FolderNode[], id: string): FolderNode | null => {
     for (const n of nodes) {
       if (n.id === id) return n;
@@ -188,7 +200,15 @@ export function App() {
   // Keyboard Shortcuts: Delete, F2, Escape, Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (folderDialogState.isOpen || isScannerOpen || isConverterOpen || isCompressorOpen || isPdfToolsOpen || previewFile) {
+      if (
+        folderDialogState.isOpen ||
+        isScannerOpen ||
+        isConverterOpen ||
+        isCompressorOpen ||
+        isPdfToolsOpen ||
+        previewFile ||
+        directConvertState.isOpen
+      ) {
         return;
       }
 
@@ -455,6 +475,47 @@ export function App() {
     }
   };
 
+  // Helper berkas terpilih untuk toolbar & konversi langsung
+  const selectedFiles = files.filter((f) => selectedIds.includes(f.id));
+  const hasSelectedPdf = selectedFiles.some(
+    (f) => !f.isFolder && (f.type === 'pdf' || f.name.toLowerCase().endsWith('.pdf'))
+  );
+  const hasSelectedImages = selectedFiles.some(
+    (f) => !f.isFolder && (f.type === 'jpg' || f.type === 'png' || /\.(jpe?g|png|webp)$/i.test(f.name))
+  );
+
+  const getCurrentFolderName = (): string => {
+    if (!currentFolderId) return 'Beranda (Home)';
+    const node = findFolderNodeInTree(folderTree, currentFolderId);
+    return node ? node.name : 'Folder Saat Ini';
+  };
+
+  const handleToolbarDirectConvertPdfToJpg = () => {
+    const pdfs = selectedFiles.filter(
+      (f) => !f.isFolder && (f.type === 'pdf' || f.name.toLowerCase().endsWith('.pdf'))
+    );
+    if (pdfs.length > 0) {
+      setDirectConvertState({
+        isOpen: true,
+        type: 'pdf-to-jpg',
+        targetFiles: pdfs
+      });
+    }
+  };
+
+  const handleToolbarDirectConvertJpgToPdf = () => {
+    const images = selectedFiles.filter(
+      (f) => !f.isFolder && (f.type === 'jpg' || f.type === 'png' || /\.(jpe?g|png|webp)$/i.test(f.name))
+    );
+    if (images.length > 0) {
+      setDirectConvertState({
+        isOpen: true,
+        type: 'jpg-to-pdf',
+        targetFiles: images
+      });
+    }
+  };
+
   // Handle buka file atau folder
   const handleOpenFile = (file: VirtualFile) => {
     if (file.isFolder) {
@@ -703,6 +764,10 @@ export function App() {
         clipboardAction={clipboard?.action || null}
         onBulkDownloadZip={handleBulkDownloadZip}
         onBulkMergePdf={handleBulkMergePdf}
+        hasSelectedPdf={hasSelectedPdf}
+        hasSelectedImages={hasSelectedImages}
+        onDirectConvertPdfToJpg={handleToolbarDirectConvertPdfToJpg}
+        onDirectConvertJpgToPdf={handleToolbarDirectConvertJpgToPdf}
         viewMode={viewMode}
         onToggleViewMode={setViewMode}
         sortBy={sortBy}
@@ -891,6 +956,35 @@ export function App() {
           clipboardCount={clipboard?.items.length || 0}
           isRecycleBin={activeNav === 'recycle_bin'}
           onRestore={(file) => restoreFiles([file.id])}
+          onDirectConvert={(convertType, targetFile) => {
+            if (convertType === 'pdf-to-jpg') {
+              const isFileInSelection = selectedIds.includes(targetFile.id);
+              const selectedPdfs = isFileInSelection
+                ? selectedFiles.filter(
+                    (f) => !f.isFolder && (f.type === 'pdf' || f.name.toLowerCase().endsWith('.pdf'))
+                  )
+                : [];
+              setDirectConvertState({
+                isOpen: true,
+                type: 'pdf-to-jpg',
+                targetFiles: selectedPdfs.length > 0 ? selectedPdfs : [targetFile]
+              });
+            } else if (convertType === 'jpg-to-pdf') {
+              const isFileInSelection = selectedIds.includes(targetFile.id);
+              const selectedImages = isFileInSelection
+                ? selectedFiles.filter(
+                    (f) =>
+                      !f.isFolder &&
+                      (f.type === 'jpg' || f.type === 'png' || /\.(jpe?g|png|webp)$/i.test(f.name))
+                  )
+                : [];
+              setDirectConvertState({
+                isOpen: true,
+                type: 'jpg-to-pdf',
+                targetFiles: selectedImages.length > 0 ? selectedImages : [targetFile]
+              });
+            }
+          }}
         />
       )}
 
@@ -982,6 +1076,18 @@ export function App() {
 
       {/* Dashboard Administrator & Manajemen Pengguna */}
       <AdminDashboardModal />
+
+      {/* Direct In-Explorer Conversion Modal (PDF to JPG & JPG to PDF) */}
+      <DirectConvertModal
+        isOpen={directConvertState.isOpen}
+        onClose={() => setDirectConvertState((prev) => ({ ...prev, isOpen: false }))}
+        type={directConvertState.type}
+        targetFiles={directConvertState.targetFiles}
+        destinationFolderId={currentFolderId}
+        destinationFolderName={getCurrentFolderName()}
+        addFile={addFile}
+        refreshAll={refreshAll}
+      />
 
       {/* Floating Upload Progress & Success Indicator Widget */}
       <UploadProgressWidget
