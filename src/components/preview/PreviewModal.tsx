@@ -24,7 +24,7 @@ interface PreviewModalProps {
   onClose: () => void;
 }
 
-// Komponen Halaman Tunggal PDF (untuk tampilan continuous scroll bersusun ke bawah)
+// Komponen Halaman Tunggal PDF dengan rasio aspek terkunci sempurna
 interface PdfPageCanvasProps {
   pdf: any;
   pageNumber: number;
@@ -34,13 +34,14 @@ interface PdfPageCanvasProps {
 const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdf, pageNumber, scale }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderTaskRef = useRef<any>(null);
+  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const [isPageLoading, setIsPageLoading] = useState<boolean>(true);
 
   useEffect(() => {
     let isCancelled = false;
 
     const render = async () => {
-      if (!pdf || !canvasRef.current) return;
+      if (!pdf) return;
       setIsPageLoading(true);
 
       try {
@@ -48,11 +49,22 @@ const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdf, pageNumber, scale })
         if (isCancelled) return;
 
         const viewport = page.getViewport({ scale });
+        const width = Math.floor(viewport.width);
+        const height = Math.floor(viewport.height);
+
+        setDimensions({ width, height });
+
         const canvas = canvasRef.current;
         if (!canvas) return;
 
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        // Kunci ukuran internal buffer canvas
+        canvas.width = width;
+        canvas.height = height;
+
+        // Kunci ukuran CSS canvas secara eksplisit dalam pixel agar tidak pernah terdistorsi / gepeng
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
@@ -97,15 +109,22 @@ const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdf, pageNumber, scale })
   }, [pdf, pageNumber, scale]);
 
   return (
-    <div className="relative shadow-2xl rounded-sm overflow-hidden bg-white mx-auto border border-gray-300">
-      <canvas ref={canvasRef} className="block max-w-full h-auto" />
+    <div
+      style={{
+        width: dimensions ? `${dimensions.width}px` : 'auto',
+        minHeight: dimensions ? `${dimensions.height}px` : '350px'
+      }}
+      className="relative shadow-2xl rounded-xs overflow-hidden bg-white mx-auto border border-gray-300 shrink-0"
+    >
+      <canvas ref={canvasRef} className="block" />
+
       {/* Badge Nomor Halaman di pojok kanan atas */}
-      <div className="absolute top-2.5 right-2.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs text-white rounded text-[10px] font-mono font-semibold pointer-events-none select-none shadow-xs">
+      <div className="absolute top-2.5 right-2.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs text-white rounded text-[10px] font-mono font-semibold pointer-events-none select-none shadow-xs z-10">
         Halaman {pageNumber}
       </div>
 
       {isPageLoading && (
-        <div className="absolute inset-0 bg-white/70 backdrop-blur-2xs flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 bg-white/70 backdrop-blur-2xs flex items-center justify-center pointer-events-none z-10">
           <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
         </div>
       )}
@@ -117,7 +136,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
   const [activeTab, setActiveTab] = useState<'preview' | 'ocr'>('preview');
   const [copied, setCopied] = useState<boolean>(false);
 
-  // PDF Viewer State (Continuous Scroll)
+  // PDF Viewer State (Continuous Vertical Scroll)
   const [numPages, setNumPages] = useState<number>(0);
   const [zoomScale, setZoomScale] = useState<number>(1.15);
   const [isLoadingPdf, setIsLoadingPdf] = useState<boolean>(false);
@@ -188,7 +207,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
   };
 
   const changeZoom = (delta: number) => {
-    setZoomScale((prev) => Math.max(0.6, Math.min(2.5, +(prev + delta).toFixed(2))));
+    setZoomScale((prev) => Math.max(0.5, Math.min(2.5, +(prev + delta).toFixed(2))));
   };
 
   const resetZoom = () => {
@@ -289,7 +308,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
                   </div>
                 ) : (
                   /* Container Scroll Vertikal dari Halaman 1 sampai Halaman Terakhir */
-                  <div className="w-full h-full overflow-y-auto overflow-x-auto p-4 sm:p-6 flex flex-col items-center space-y-5 scrollbar-thin scrollbar-thumb-gray-700">
+                  <div className="w-full h-full overflow-y-auto overflow-x-auto p-4 sm:p-6 flex flex-col items-center space-y-6 scrollbar-thin scrollbar-thumb-gray-700">
                     {pdfDocRef.current &&
                       Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                         <PdfPageCanvas
@@ -299,13 +318,13 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
                           scale={zoomScale}
                         />
                       ))}
-                    <div className="h-16" /> {/* Spasi ekstra di bawah agar halaman terakhir tidak terhalang controller */}
+                    <div className="h-16 shrink-0" /> {/* Spasi ekstra di bawah */}
                   </div>
                 )}
 
                 {/* Floating Bottom Controller (Zoom & Info Halaman) */}
                 {numPages > 0 && !isLoadingPdf && (
-                  <div className="absolute bottom-5 bg-gray-800/90 backdrop-blur-md border border-gray-700 text-white px-3.5 py-1.5 rounded-full flex items-center space-x-2.5 text-xs shadow-2xl z-20 select-none animate-in fade-in slide-in-from-bottom-2 duration-150">
+                  <div className="absolute bottom-5 bg-gray-800/90 backdrop-blur-md border border-gray-700 text-white px-3.5 py-1.5 rounded-full flex items-center space-x-2.5 text-xs shadow-2xl z-20 select-none animate-in fade-in slide-from-bottom-2 duration-150">
                     <div className="flex items-center space-x-1.5 font-medium text-gray-200 pr-1">
                       <FileText className="w-3.5 h-3.5 text-blue-400" />
                       <span>{numPages} Halaman</span>
@@ -326,7 +345,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
                       type="button"
                       onClick={resetZoom}
                       className="font-mono text-[11px] min-w-10 text-center hover:bg-gray-700 py-0.5 px-1 rounded transition text-blue-300"
-                      title="Klik untuk reset zoom (100%)"
+                      title="Klik untuk reset zoom"
                     >
                       {Math.round(zoomScale * 100)}%
                     </button>
