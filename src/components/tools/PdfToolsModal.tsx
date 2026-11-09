@@ -182,22 +182,54 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
     moveMergeItem(fromIdx, toIdx);
   };
 
-  // HTML5 Drag & Drop Handlers
-  const handleDragStart = (idx: number) => {
+  // HTML5 Drag & Drop Handlers yang Handal & Presisi
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    e.dataTransfer.setData('text/plain', idx.toString());
+    e.dataTransfer.setData('application/x-pdfku-index', idx.toString());
+    e.dataTransfer.effectAllowed = 'move';
     setDraggedIndex(idx);
   };
 
   const handleDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
     if (dragOverIndex !== idx) {
       setDragOverIndex(idx);
     }
   };
 
-  const handleDrop = (idx: number) => {
-    if (draggedIndex !== null && draggedIndex !== idx) {
-      moveMergeItem(draggedIndex, idx);
+  const handleDragEnter = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverIndex(idx);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let sourceIdx: number | null = null;
+    const customData = e.dataTransfer.getData('application/x-pdfku-index');
+    const plainData = e.dataTransfer.getData('text/plain');
+
+    if (customData) {
+      sourceIdx = parseInt(customData, 10);
+    } else if (plainData) {
+      sourceIdx = parseInt(plainData, 10);
+    } else if (draggedIndex !== null) {
+      sourceIdx = draggedIndex;
     }
+
+    if (sourceIdx !== null && !isNaN(sourceIdx) && sourceIdx !== targetIdx) {
+      moveMergeItem(sourceIdx, targetIdx);
+    }
+
     setDraggedIndex(null);
     setDragOverIndex(null);
   };
@@ -481,16 +513,18 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
                     <div
                       key={item.id}
                       draggable={true}
-                      onDragStart={() => handleDragStart(idx)}
+                      onDragStart={(e) => handleDragStart(e, idx)}
                       onDragOver={(e) => handleDragOver(e, idx)}
-                      onDrop={() => handleDrop(idx)}
+                      onDragEnter={(e) => handleDragEnter(e, idx)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, idx)}
                       onDragEnd={handleDragEnd}
-                      className={`group relative bg-white border rounded-xl overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col ${
+                      className={`group relative bg-white border rounded-xl overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col cursor-grab active:cursor-grabbing ${
                         draggedIndex === idx
-                          ? 'opacity-40 border-dashed border-blue-500 scale-95'
+                          ? 'opacity-30 border-dashed border-blue-500 scale-95'
                           : dragOverIndex === idx
-                          ? 'border-blue-500 ring-2 ring-blue-300 scale-102'
-                          : 'border-gray-200 hover:border-blue-300'
+                          ? 'border-blue-600 ring-4 ring-blue-300 scale-102 bg-blue-50/20'
+                          : 'border-gray-200 hover:border-blue-400'
                       }`}
                     >
                       {/* Header Kartu: Badge Nomor Urut & Tombol Hapus */}
@@ -514,7 +548,7 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
                       </div>
 
                       {/* Area Preview Halaman 1 */}
-                      <div className="relative p-2.5 flex items-center justify-center bg-gray-100/70 min-h-[145px] flex-1">
+                      <div className="relative p-2.5 flex items-center justify-center bg-gray-100/70 min-h-[145px] flex-1 pointer-events-none">
                         {item.isLoadingThumb ? (
                           <div className="flex flex-col items-center justify-center py-6 text-gray-400">
                             <Loader2 className="w-6 h-6 animate-spin text-blue-500 mb-1.5" />
@@ -525,7 +559,8 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
                             <img
                               src={item.thumbnailUrl}
                               alt={item.name}
-                              className="max-h-34 w-auto object-contain pointer-events-none select-none"
+                              draggable={false}
+                              className="max-h-34 w-auto object-contain select-none pointer-events-none"
                             />
                           </div>
                         ) : (
@@ -617,14 +652,22 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
                     <div
                       key={item.id}
                       draggable={true}
-                      onDragStart={() => handleDragStart(idx)}
+                      onDragStart={(e) => handleDragStart(e, idx)}
                       onDragOver={(e) => handleDragOver(e, idx)}
-                      onDrop={() => handleDrop(idx)}
+                      onDragEnter={(e) => handleDragEnter(e, idx)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, idx)}
                       onDragEnd={handleDragEnd}
-                      className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-gray-200 text-xs shadow-2xs hover:border-blue-400 transition"
+                      className={`flex items-center justify-between p-2.5 bg-white rounded-xl border text-xs shadow-2xs transition cursor-grab active:cursor-grabbing ${
+                        draggedIndex === idx
+                          ? 'opacity-30 border-dashed border-blue-500 scale-95'
+                          : dragOverIndex === idx
+                          ? 'border-blue-600 ring-4 ring-blue-300 scale-101 bg-blue-50/30'
+                          : 'border-gray-200 hover:border-blue-400'
+                      }`}
                     >
-                      <div className="flex items-center space-x-3 truncate">
-                        <div className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600">
+                      <div className="flex items-center space-x-3 truncate pointer-events-none">
+                        <div className="text-gray-400">
                           <GripVertical className="w-4 h-4" />
                         </div>
                         <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center shrink-0">
@@ -634,7 +677,7 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
                         {/* Mini Thumbnail */}
                         <div className="w-9 h-11 bg-gray-100 rounded border border-gray-200 overflow-hidden flex items-center justify-center shrink-0">
                           {item.thumbnailUrl ? (
-                            <img src={item.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                            <img src={item.thumbnailUrl} alt="" draggable={false} className="w-full h-full object-cover select-none" />
                           ) : (
                             <FileText className="w-4 h-4 text-rose-500" />
                           )}
