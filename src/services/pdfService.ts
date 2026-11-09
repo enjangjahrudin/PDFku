@@ -311,26 +311,41 @@ export async function compressPdf(
  * Buat pratinjau thumbnail cepat dari halaman 1 berkas PDF
  */
 export async function generatePdfThumbnail(pdfBlob: Blob): Promise<string | undefined> {
+  const meta = await getPdfMetadataAndThumbnail(pdfBlob);
+  return meta.thumbnailUrl;
+}
+
+export interface PdfMetadataInfo {
+  thumbnailUrl?: string;
+  pageCount: number;
+}
+
+/**
+ * Ekstrak thumbnail halaman 1 sekaligus jumlah total halaman berkas PDF
+ */
+export async function getPdfMetadataAndThumbnail(pdfBlob: Blob): Promise<PdfMetadataInfo> {
   try {
     const arrayBuffer = await pdfBlob.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
     const pdfDoc = await loadingTask.promise;
-    if (pdfDoc.numPages < 1) return undefined;
+    const pageCount = pdfDoc.numPages;
+    if (pageCount < 1) return { pageCount: 0 };
 
     const page = await pdfDoc.getPage(1);
-    const viewport = page.getViewport({ scale: 0.35 });
+    const viewport = page.getViewport({ scale: 0.45 });
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return undefined;
+    if (!ctx) return { pageCount };
 
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    return canvas.toDataURL('image/jpeg', 0.6);
+    const thumbnailUrl = canvas.toDataURL('image/jpeg', 0.7);
+    return { thumbnailUrl, pageCount };
   } catch {
-    return undefined;
+    return { pageCount: 0 };
   }
 }

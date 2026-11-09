@@ -1108,6 +1108,13 @@ export function App() {
         isOpen={isPdfToolsOpen}
         onClose={() => setIsPdfToolsOpen(false)}
         onSaveToExplorer={addFile}
+        currentFolderId={currentFolderId}
+        currentFolderName={currentFolderId ? findFolderNodeInTree(folderTree, currentFolderId)?.name : undefined}
+        initialPdfFiles={
+          selectedIds.length > 0
+            ? files.filter(f => selectedIds.includes(f.id) && !f.isFolder && (f.type === 'pdf' || f.name.toLowerCase().endsWith('.pdf')))
+            : undefined
+        }
       />
 
       {/* Preview Modal (PDF / Image / OCR) */}
