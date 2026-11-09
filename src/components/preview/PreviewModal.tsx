@@ -2,15 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Download,
-  ChevronLeft,
-  ChevronRight,
   ZoomIn,
   ZoomOut,
-  FileText,
   Copy,
   Check,
   Eye,
-  Loader2
+  Loader2,
+  FileText,
+  RotateCcw
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
@@ -25,16 +24,103 @@ interface PreviewModalProps {
   onClose: () => void;
 }
 
+// Komponen Halaman Tunggal PDF (untuk tampilan continuous scroll bersusun ke bawah)
+interface PdfPageCanvasProps {
+  pdf: any;
+  pageNumber: number;
+  scale: number;
+}
+
+const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdf, pageNumber, scale }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderTaskRef = useRef<any>(null);
+  const [isPageLoading, setIsPageLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const render = async () => {
+      if (!pdf || !canvasRef.current) return;
+      setIsPageLoading(true);
+
+      try {
+        const page = await pdf.getPage(pageNumber);
+        if (isCancelled) return;
+
+        const viewport = page.getViewport({ scale });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Batalkan render sebelumnya jika masih berjalan pada canvas ini
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch {
+            // Abaikan error pembatalan
+          }
+        }
+
+        const renderTask = page.render({
+          canvasContext: ctx,
+          viewport
+        });
+        renderTaskRef.current = renderTask;
+
+        await renderTask.promise;
+        if (!isCancelled) {
+          setIsPageLoading(false);
+        }
+      } catch (err: any) {
+        if (err?.name !== 'RenderingCancelledException') {
+          console.error(`Gagal render halaman ${pageNumber}:`, err);
+        }
+      }
+    };
+
+    render();
+
+    return () => {
+      isCancelled = true;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch {
+          // Abaikan
+        }
+      }
+    };
+  }, [pdf, pageNumber, scale]);
+
+  return (
+    <div className="relative shadow-2xl rounded-sm overflow-hidden bg-white mx-auto border border-gray-300">
+      <canvas ref={canvasRef} className="block max-w-full h-auto" />
+      {/* Badge Nomor Halaman di pojok kanan atas */}
+      <div className="absolute top-2.5 right-2.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs text-white rounded text-[10px] font-mono font-semibold pointer-events-none select-none shadow-xs">
+        Halaman {pageNumber}
+      </div>
+
+      {isPageLoading && (
+        <div className="absolute inset-0 bg-white/70 backdrop-blur-2xs flex items-center justify-center pointer-events-none">
+          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'ocr'>('preview');
   const [copied, setCopied] = useState<boolean>(false);
 
-  // PDF Viewer State
-  const [numPages, setNumPages] = useState<number>(1);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [zoomScale, setZoomScale] = useState<number>(1.2);
+  // PDF Viewer State (Continuous Scroll)
+  const [numPages, setNumPages] = useState<number>(0);
+  const [zoomScale, setZoomScale] = useState<number>(1.15);
   const [isLoadingPdf, setIsLoadingPdf] = useState<boolean>(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const pdfDocRef = useRef<any>(null);
 
   // Image preview state
@@ -75,6 +161,14 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
 
     return () => {
       active = false;
+      if (pdfDocRef.current) {
+        try {
+          pdfDocRef.current.destroy();
+        } catch {
+          // Abaikan
+        }
+        pdfDocRef.current = null;
+      }
     };
   }, [file]);
 
@@ -86,8 +180,6 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
       const pdf = await loadingTask.promise;
       pdfDocRef.current = pdf;
       setNumPages(pdf.numPages);
-      setCurrentPage(1);
-      renderPage(1, pdf, zoomScale);
     } catch (err) {
       console.error('Gagal memuat PDF:', err);
     } finally {
@@ -95,43 +187,12 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
     }
   };
 
-  const renderPage = async (pageNumber: number, pdf: any, scale: number) => {
-    if (!pdf) return;
-    try {
-      const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale });
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d')!;
-
-      await page.render({
-        canvasContext: ctx,
-        viewport
-      }).promise;
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const changePage = (delta: number) => {
-    const next = currentPage + delta;
-    if (next >= 1 && next <= numPages) {
-      setCurrentPage(next);
-      if (pdfDocRef.current) {
-        renderPage(next, pdfDocRef.current, zoomScale);
-      }
-    }
-  };
-
   const changeZoom = (delta: number) => {
-    const nextScale = Math.max(0.6, Math.min(3.0, zoomScale + delta));
-    setZoomScale(nextScale);
-    if (pdfDocRef.current) {
-      renderPage(currentPage, pdfDocRef.current, nextScale);
-    }
+    setZoomScale((prev) => Math.max(0.6, Math.min(2.5, +(prev + delta).toFixed(2))));
+  };
+
+  const resetZoom = () => {
+    setZoomScale(1.15);
   };
 
   const handleCopyOcr = () => {
@@ -144,40 +205,42 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
   if (!file) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 select-none">
-      <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 select-none">
+      <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-5xl h-[94vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
-        <div className="h-12 border-b border-gray-200 px-4 flex items-center justify-between bg-[#fafafa]">
-          <div className="flex items-center space-x-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+        <div className="h-12 border-b border-gray-200 px-4 sm:px-5 flex items-center justify-between bg-[#fafafa] shrink-0">
+          <div className="flex items-center space-x-2.5 truncate">
+            <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white shrink-0 shadow-xs">
               <Eye className="w-4 h-4" />
             </div>
-            <div>
-              <h3 className="text-xs font-semibold text-gray-800 truncate max-w-md">
+            <div className="truncate">
+              <h3 className="text-xs sm:text-sm font-bold text-gray-800 truncate max-w-sm sm:max-w-md">
                 {file.name}
               </h3>
               <p className="text-[10px] text-gray-400">
-                {formatFileSize(file.size)} • {formatDate(file.updatedAt)}
+                {formatFileSize(file.size)} • {formatDate(file.updatedAt)} {numPages > 0 ? `• ${numPages} Halaman` : ''}
               </p>
             </div>
           </div>
 
           {/* Action Tabs & Controls */}
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 shrink-0">
             {file.ocrText && (
-              <div className="flex bg-gray-200/80 p-0.5 rounded-md text-xs font-medium">
+              <div className="flex bg-gray-200/80 p-0.5 rounded-lg text-xs font-medium">
                 <button
+                  type="button"
                   onClick={() => setActiveTab('preview')}
-                  className={`px-2.5 py-1 rounded transition ${
-                    activeTab === 'preview' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-600'
+                  className={`px-2.5 py-1 rounded-md transition ${
+                    activeTab === 'preview' ? 'bg-white text-blue-600 shadow-2xs font-semibold' : 'text-gray-600'
                   }`}
                 >
-                  Pratinjau Dokumen
+                  Pratinjau
                 </button>
                 <button
+                  type="button"
                   onClick={() => setActiveTab('ocr')}
-                  className={`px-2.5 py-1 rounded transition ${
-                    activeTab === 'ocr' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-600'
+                  className={`px-2.5 py-1 rounded-md transition ${
+                    activeTab === 'ocr' ? 'bg-white text-blue-600 shadow-2xs font-semibold' : 'text-gray-600'
                   }`}
                 >
                   Teks OCR
@@ -186,6 +249,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
             )}
 
             <button
+              type="button"
               onClick={() => {
                 if (file.blob) {
                   downloadBlob(file.blob, file.name);
@@ -193,15 +257,17 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
                   window.open(`/api/files/download/${file.id}`, '_blank');
                 }
               }}
-              className="flex items-center space-x-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-medium transition shadow-xs"
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition shadow-xs"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Unduh</span>
+              <span className="hidden sm:inline">Unduh</span>
             </button>
 
             <button
+              type="button"
               onClick={onClose}
-              className="p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition"
+              title="Tutup (Esc)"
             >
               <X className="w-5 h-5" />
             </button>
@@ -209,83 +275,103 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 bg-gray-900 overflow-auto flex flex-col items-center justify-center p-4 relative">
+        <div className="flex-1 bg-gray-900/95 overflow-hidden flex flex-col items-center justify-center relative">
           {activeTab === 'preview' ? (
             file.type === 'pdf' ? (
-              // PDF Preview
-              <div className="flex flex-col items-center max-h-full">
+              /* ========================================================
+                 PDF PREVIEW: CONTINUOUS VERTICAL SCROLL (Nyambung ke Bawah)
+                 ======================================================== */
+              <div className="w-full h-full flex flex-col items-center relative overflow-hidden">
                 {isLoadingPdf ? (
-                  <div className="flex items-center space-x-2 text-white text-xs">
-                    <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
-                    <span>Memuat dokumen PDF...</span>
+                  <div className="flex flex-col items-center justify-center h-full text-white space-y-2">
+                    <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
+                    <span className="text-xs font-medium">Memuat seluruh halaman dokumen PDF...</span>
                   </div>
                 ) : (
-                  <div className="shadow-2xl rounded overflow-auto max-h-[75vh]">
-                    <canvas ref={canvasRef} className="rounded" />
+                  /* Container Scroll Vertikal dari Halaman 1 sampai Halaman Terakhir */
+                  <div className="w-full h-full overflow-y-auto overflow-x-auto p-4 sm:p-6 flex flex-col items-center space-y-5 scrollbar-thin scrollbar-thumb-gray-700">
+                    {pdfDocRef.current &&
+                      Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+                        <PdfPageCanvas
+                          key={pageNum}
+                          pdf={pdfDocRef.current}
+                          pageNumber={pageNum}
+                          scale={zoomScale}
+                        />
+                      ))}
+                    <div className="h-16" /> {/* Spasi ekstra di bawah agar halaman terakhir tidak terhalang controller */}
                   </div>
                 )}
 
-                {/* PDF Floating Controller */}
+                {/* Floating Bottom Controller (Zoom & Info Halaman) */}
                 {numPages > 0 && !isLoadingPdf && (
-                  <div className="fixed bottom-8 bg-gray-800/90 backdrop-blur-md border border-gray-700 text-white px-3 py-1.5 rounded-full flex items-center space-x-3 text-xs shadow-xl">
-                    <button
-                      onClick={() => changePage(-1)}
-                      disabled={currentPage <= 1}
-                      className="p-1 hover:bg-gray-700 rounded disabled:opacity-30"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <span className="font-mono text-[11px]">
-                      {currentPage} / {numPages}
-                    </span>
-                    <button
-                      onClick={() => changePage(1)}
-                      disabled={currentPage >= numPages}
-                      className="p-1 hover:bg-gray-700 rounded disabled:opacity-30"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
+                  <div className="absolute bottom-5 bg-gray-800/90 backdrop-blur-md border border-gray-700 text-white px-3.5 py-1.5 rounded-full flex items-center space-x-2.5 text-xs shadow-2xl z-20 select-none animate-in fade-in slide-in-from-bottom-2 duration-150">
+                    <div className="flex items-center space-x-1.5 font-medium text-gray-200 pr-1">
+                      <FileText className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{numPages} Halaman</span>
+                    </div>
 
-                    <div className="h-3 w-px bg-gray-600 mx-1" />
+                    <div className="h-3.5 w-px bg-gray-600" />
 
                     <button
-                      onClick={() => changeZoom(-0.2)}
-                      className="p-1 hover:bg-gray-700 rounded"
-                      title="Perkecil"
+                      type="button"
+                      onClick={() => changeZoom(-0.15)}
+                      className="p-1 hover:bg-gray-700 rounded transition text-gray-300 hover:text-white"
+                      title="Perkecil (-)"
                     >
                       <ZoomOut className="w-3.5 h-3.5" />
                     </button>
-                    <span className="font-mono text-[11px]">{Math.round(zoomScale * 100)}%</span>
+
                     <button
-                      onClick={() => changeZoom(0.2)}
-                      className="p-1 hover:bg-gray-700 rounded"
-                      title="Perbesar"
+                      type="button"
+                      onClick={resetZoom}
+                      className="font-mono text-[11px] min-w-10 text-center hover:bg-gray-700 py-0.5 px-1 rounded transition text-blue-300"
+                      title="Klik untuk reset zoom (100%)"
+                    >
+                      {Math.round(zoomScale * 100)}%
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => changeZoom(0.15)}
+                      className="p-1 hover:bg-gray-700 rounded transition text-gray-300 hover:text-white"
+                      title="Perbesar (+)"
                     >
                       <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={resetZoom}
+                      className="p-1 hover:bg-gray-700 rounded transition text-gray-400 hover:text-white"
+                      title="Reset Zoom"
+                    >
+                      <RotateCcw className="w-3 h-3" />
                     </button>
                   </div>
                 )}
               </div>
             ) : (
               // Image Preview
-              <div className="flex items-center justify-center max-h-full max-w-full">
+              <div className="w-full h-full overflow-auto flex items-center justify-center p-4">
                 <img
                   src={imgUrl}
                   alt={file.name}
-                  className="max-h-[78vh] max-w-full object-contain rounded-lg shadow-2xl"
+                  className="max-h-[82vh] max-w-full object-contain rounded-xl shadow-2xl select-none"
                 />
               </div>
             )
           ) : (
             // OCR Text View
-            <div className="w-full max-w-3xl h-full bg-white rounded-lg p-5 flex flex-col justify-between shadow-xl">
-              <div className="flex items-center justify-between border-b border-gray-200 pb-2 mb-3">
-                <span className="text-xs font-semibold text-gray-700">
+            <div className="w-full max-w-3xl h-[80vh] bg-white rounded-xl p-5 flex flex-col justify-between shadow-2xl m-4">
+              <div className="flex items-center justify-between border-b border-gray-200 pb-2.5 mb-3">
+                <span className="text-xs font-bold text-gray-800">
                   Teks Terbaca Otomatis (Hasil Optical Character Recognition):
                 </span>
                 <button
+                  type="button"
                   onClick={handleCopyOcr}
-                  className="flex items-center space-x-1 px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded text-xs font-medium transition border border-blue-200"
+                  className="flex items-center space-x-1.5 px-3 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-semibold transition border border-blue-200"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copied ? 'Tersalin!' : 'Salin Teks'}</span>
@@ -295,7 +381,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ file, onClose }) => 
               <textarea
                 readOnly
                 value={file.ocrText || 'Tidak ada teks yang terdeteksi.'}
-                className="flex-1 w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono text-gray-800 focus:outline-none resize-none leading-relaxed"
+                className="flex-1 w-full bg-gray-50 border border-gray-200 rounded-xl p-3.5 text-xs font-mono text-gray-800 focus:outline-none resize-none leading-relaxed"
               />
             </div>
           )}

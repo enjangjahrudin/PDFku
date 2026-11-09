@@ -184,6 +184,7 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
 
   // HTML5 Drag & Drop Handlers yang Handal & Presisi
   const handleDragStart = (e: React.DragEvent, idx: number) => {
+    e.stopPropagation();
     e.dataTransfer.setData('text/plain', idx.toString());
     e.dataTransfer.setData('application/x-pdfku-index', idx.toString());
     e.dataTransfer.effectAllowed = 'move';
@@ -234,7 +235,8 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
     setDragOverIndex(null);
   };
 
-  const handleDragEnd = () => {
+  const handleDragEnd = (e: React.DragEvent) => {
+    e.stopPropagation();
     setDraggedIndex(null);
     setDragOverIndex(null);
   };
@@ -261,8 +263,8 @@ export const PdfToolsModal: React.FC<PdfToolsModalProps> = ({
           blob: resBlob,
           colorTag: '#3b82f6'
         });
-        alert(`Berkas PDF "${finalName}" berhasil digabungkan dan disimpan!`);
         onClose();
+        alert(`Berkas PDF "${finalName}" berhasil digabungkan dan disimpan!`);
       } else {
         saveAs(resBlob, finalName);
       }

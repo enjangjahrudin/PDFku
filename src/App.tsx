@@ -280,6 +280,17 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedIds, files, activeNav, deleteFiles, folderDialogState, isScannerOpen, isConverterOpen, isCompressorOpen, isPdfToolsOpen, previewFile, copyItems, cutItems, pasteItems, clearClipboard, clipboard, goUp, goBack, goForward]);
 
+  // Listener global untuk memastikan dropzone tidak tersangkut aktif
+  useEffect(() => {
+    const handleGlobalDragEnd = () => setIsDragOver(false);
+    window.addEventListener('dragend', handleGlobalDragEnd);
+    window.addEventListener('drop', handleGlobalDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleGlobalDragEnd);
+      window.removeEventListener('drop', handleGlobalDragEnd);
+    };
+  }, []);
+
   // Efek memulihkan posisi scroll dan memfokuskan folder terakhir saat kembali ke folder atasnya (Back / Up)
   useEffect(() => {
     const mainEl = mainContentRef.current;
@@ -698,6 +709,27 @@ export function App() {
   };
 
   const handleDragOver = (e: React.DragEvent) => {
+    // Jangan aktifkan dropzone jika ada modal yang sedang terbuka
+    if (
+      isPdfToolsOpen ||
+      isScannerOpen ||
+      isConverterOpen ||
+      isCompressorOpen ||
+      previewFile !== null ||
+      directConvertState.isOpen ||
+      folderDialogState.isOpen ||
+      moveDialogState.isOpen ||
+      deleteFolderModal.isOpen
+    ) {
+      return;
+    }
+
+    // Pastikan yang ditarik adalah berkas sistem operasi (Files dari desktop/file explorer)
+    const types = Array.from(e.dataTransfer.types || []);
+    if (!types.includes('Files') || types.includes('application/x-pdfku-index')) {
+      return;
+    }
+
     e.preventDefault();
     if (!isDragOver) setIsDragOver(true);
   };
@@ -710,6 +742,18 @@ export function App() {
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
+
+    // Jangan proses jika ada modal aktif
+    if (
+      isPdfToolsOpen ||
+      isScannerOpen ||
+      isConverterOpen ||
+      isCompressorOpen ||
+      previewFile !== null
+    ) {
+      return;
+    }
+
     const droppedFiles = e.dataTransfer.files;
     if (!droppedFiles || droppedFiles.length === 0) return;
     const fileList = Array.from(droppedFiles);
@@ -745,8 +789,11 @@ export function App() {
     >
       {/* Drop Zone Visual Indicator */}
       {isDragOver && (
-        <div className="fixed inset-0 z-50 bg-blue-600/10 backdrop-blur-xs border-4 border-dashed border-blue-500 pointer-events-none flex flex-col items-center justify-center animate-in fade-in duration-150">
-          <div className="bg-white/95 rounded-2xl p-6 shadow-2xl flex flex-col items-center border border-blue-200">
+        <div
+          onClick={() => setIsDragOver(false)}
+          className="fixed inset-0 z-50 bg-blue-600/10 backdrop-blur-xs border-4 border-dashed border-blue-500 cursor-pointer flex flex-col items-center justify-center animate-in fade-in duration-150"
+        >
+          <div className="bg-white/95 rounded-2xl p-6 shadow-2xl flex flex-col items-center border border-blue-200 pointer-events-auto">
             <Upload className="w-12 h-12 text-blue-600 mb-2 animate-bounce" />
             <p className="text-base font-bold text-gray-800">Lepaskan berkas untuk mengunggah</p>
             <p className="text-xs text-gray-500 mt-1">Berkas akan otomatis disimpan ke folder aktif</p>
