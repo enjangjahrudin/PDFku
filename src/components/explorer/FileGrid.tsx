@@ -23,6 +23,7 @@ interface FileGridProps {
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
   onToggleFavorite: (id: string) => void;
   onUploadFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onDownloadFile?: (file: VirtualFile) => void;
   isRecycleBin?: boolean;
   activeNav?: string;
 }
@@ -36,6 +37,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onContextMenu,
   onToggleFavorite,
   onUploadFile,
+  onDownloadFile,
   isRecycleBin,
   activeNav
 }) => {
@@ -210,6 +212,19 @@ export const FileGrid: React.FC<FileGridProps> = ({
                 >
                   <Eye className="w-4 h-4 text-blue-600" />
                 </button>
+
+                {!file.isFolder && onDownloadFile && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDownloadFile(file);
+                    }}
+                    className="p-1.5 bg-white text-gray-800 rounded-md hover:bg-emerald-50 transition shadow"
+                    title="Unduh Berkas Ini Langsung"
+                  >
+                    <Download className="w-4 h-4 text-emerald-600" />
+                  </button>
+                )}
               </div>
             </div>
 

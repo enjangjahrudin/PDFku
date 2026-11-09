@@ -435,6 +435,39 @@ export function App() {
     saveAs(zipBlob, finalZipName);
   };
 
+  // Unduh 1 berkas tunggal langsung (tanpa ZIP)
+  const handleDownloadSingleFile = async (file: VirtualFile) => {
+    if (file.isFolder) {
+      await handleDownloadFolderZip(file.id, file.name);
+      return;
+    }
+    const blob = file.blob || (await cloudFileService.fetchFileBlob(file.id));
+    if (!blob) {
+      alert(`Gagal mengunduh berkas "${file.name}" dari server.`);
+      return;
+    }
+    saveAs(blob, file.name);
+  };
+
+  // Unduh semua berkas terpilih satu per satu dalam format aslinya (tanpa ZIP)
+  const handleDownloadPerFile = async () => {
+    const itemsToDownload = files.filter(f => selectedIds.includes(f.id));
+    if (itemsToDownload.length === 0) return;
+
+    if (itemsToDownload.length === 1) {
+      await handleDownloadSingleFile(itemsToDownload[0]);
+      return;
+    }
+
+    for (let i = 0; i < itemsToDownload.length; i++) {
+      const item = itemsToDownload[i];
+      await handleDownloadSingleFile(item);
+      if (i < itemsToDownload.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+    }
+  };
+
   // Gabung Masal ke PDF (Bulk Merge)
   const handleBulkMergePdf = async () => {
     const selectedImages = files.filter(
@@ -477,6 +510,8 @@ export function App() {
 
   // Helper berkas terpilih untuk toolbar & konversi langsung
   const selectedFiles = files.filter((f) => selectedIds.includes(f.id));
+  const singleSelectedFile = selectedFiles.length === 1 ? selectedFiles[0] : null;
+  const isSingleFileSelected = !!(singleSelectedFile && !singleSelectedFile.isFolder);
   const hasSelectedPdf = selectedFiles.some(
     (f) => !f.isFolder && (f.type === 'pdf' || f.name.toLowerCase().endsWith('.pdf'))
   );
@@ -763,6 +798,8 @@ export function App() {
         clipboardCount={clipboard?.items.length || 0}
         clipboardAction={clipboard?.action || null}
         onBulkDownloadZip={handleBulkDownloadZip}
+        onDownloadPerFile={handleDownloadPerFile}
+        isSingleFileSelected={isSingleFileSelected}
         onBulkMergePdf={handleBulkMergePdf}
         hasSelectedPdf={hasSelectedPdf}
         hasSelectedImages={hasSelectedImages}
@@ -859,6 +896,7 @@ export function App() {
               onContextMenu={handleContextMenu}
               onToggleFavorite={toggleFavorite}
               onUploadFile={handleUploadFiles}
+              onDownloadFile={handleDownloadSingleFile}
               isRecycleBin={activeNav === 'recycle_bin'}
               activeNav={activeNav}
             />
@@ -872,6 +910,7 @@ export function App() {
               onContextMenu={handleContextMenu}
               onToggleFavorite={toggleFavorite}
               onSelectAll={handleToggleSelectAll}
+              onDownloadFile={handleDownloadSingleFile}
               isRecycleBin={activeNav === 'recycle_bin'}
               activeNav={activeNav}
             />

@@ -22,6 +22,7 @@ interface FileListProps {
   onContextMenu: (e: React.MouseEvent, file: VirtualFile) => void;
   onToggleFavorite: (id: string) => void;
   onSelectAll?: (selectAll: boolean) => void;
+  onDownloadFile?: (file: VirtualFile) => void;
   isRecycleBin?: boolean;
   activeNav?: string;
 }
@@ -35,6 +36,7 @@ export const FileList: React.FC<FileListProps> = ({
   onContextMenu,
   onToggleFavorite,
   onSelectAll,
+  onDownloadFile,
   isRecycleBin,
   activeNav
 }) => {
@@ -202,11 +204,25 @@ export const FileList: React.FC<FileListProps> = ({
                 <td className="py-2 px-3 text-center">
                   <div className="flex items-center justify-center space-x-1">
                     <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onDownloadFile) {
+                          onDownloadFile(file);
+                        }
+                      }}
+                      className="p-1 hover:bg-emerald-50 rounded text-gray-500 hover:text-emerald-600 transition"
+                      title={file.isFolder ? "Unduh Folder (ZIP)" : "Unduh Berkas Ini Langsung"}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpen(file);
                       }}
-                      className="p-1 hover:bg-gray-200 rounded text-gray-600 hover:text-blue-600"
+                      className="p-1 hover:bg-gray-200 rounded text-gray-600 hover:text-blue-600 transition"
                       title="Lihat Pratinjau"
                     >
                       <Eye className="w-3.5 h-3.5" />

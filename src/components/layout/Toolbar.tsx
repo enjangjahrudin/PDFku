@@ -40,6 +40,8 @@ interface ToolbarProps {
   clipboardCount?: number;
   clipboardAction?: 'copy' | 'cut' | null;
   onBulkDownloadZip?: () => void;
+  onDownloadPerFile?: () => void;
+  isSingleFileSelected?: boolean;
   onBulkMergePdf?: () => void;
   hasSelectedPdf?: boolean;
   hasSelectedImages?: boolean;
@@ -74,6 +76,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   clipboardCount = 0,
   clipboardAction,
   onBulkDownloadZip,
+  onDownloadPerFile,
+  isSingleFileSelected = false,
   onBulkMergePdf,
   hasSelectedPdf = false,
   hasSelectedImages = false,
@@ -233,6 +237,19 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               </button>
             )}
 
+            {/* Opsi Download Tunggal (Langsung per file tanpa ZIP) */}
+            {onDownloadPerFile && selectedCount === 1 && isSingleFileSelected && (
+              <button
+                onClick={onDownloadPerFile}
+                className="flex items-center space-x-1 px-2.5 py-1.5 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition font-semibold border border-emerald-300 shadow-2xs"
+                title="Unduh berkas ini langsung dalam format aslinya (tanpa ZIP)"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Download File</span>
+              </button>
+            )}
+
+            {/* Opsi Download ZIP */}
             {onBulkDownloadZip && selectedCount > 0 && (
               <button
                 onClick={onBulkDownloadZip}
@@ -241,6 +258,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               >
                 <Download className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Download ZIP ({selectedCount})</span>
+              </button>
+            )}
+
+            {/* Opsi Download Semua Berkas Terpilih Satu Per Satu (tanpa ZIP) jika memilih lebih dari 1 file */}
+            {onDownloadPerFile && selectedCount > 1 && (
+              <button
+                onClick={onDownloadPerFile}
+                className="flex items-center space-x-1 px-2 py-1.5 text-xs text-teal-700 bg-teal-50/70 hover:bg-teal-100 rounded-md transition font-medium border border-teal-200"
+                title="Unduh semua berkas terpilih langsung satu per satu (tanpa ZIP)"
+              >
+                <Download className="w-3.5 h-3.5 text-teal-600" />
+                <span>Download Per File ({selectedCount})</span>
               </button>
             )}
 
