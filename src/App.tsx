@@ -770,6 +770,7 @@ export function App() {
         totalFilesCount={files.length}
         isAllSelected={selectedIds.length === files.length && files.length > 0}
         onToggleSelectAll={handleToggleSelectAll}
+        onClearSelection={() => setSelectedIds([])}
         onDeleteSelected={() => {
           const selectedFolders = files.filter(f => selectedIds.includes(f.id) && f.isFolder);
           if (selectedFolders.length === 1 && selectedIds.length === 1) {
